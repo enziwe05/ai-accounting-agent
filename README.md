@@ -11,9 +11,10 @@ boundary is kept in every feature.
 Built for **South African SMEs** — amounts in ZAR, 15% VAT, and a bank-statement
 reader that handles any South African bank.
 
-> **Status:** early build. **Phases 1–3 are done** — document reading (tested on real
-> receipts), the MySQL storage schema, and categorization (rules engine + review-queue
-> fallback, unit-tested). Phases 4–8 are planned — see the roadmap below.
+> **Status:** early build. **Phases 1–4 are done** — document reading (tested on real
+> receipts), the MySQL storage schema, categorization (rules engine + review-queue
+> fallback), and bank-statement reconciliation (reads any SA bank's PDF, matches lines to
+> documents, flags the gaps). All unit-tested. Phases 5–8 are planned — see the roadmap.
 
 ## What it will do
 
@@ -70,8 +71,9 @@ These are non-negotiable and enforced in code, not just intention:
 3. ✅ **Categorization as code** — `categorize.py` (a pure, unit-tested rules
    engine) + `seed_db.py` starter rules. Rules decide; the model only *suggests*
    into the `review_queue` when no rule matches — never auto-applied.
-4. ⬜ Statement upload & reconciliation — read any South African bank's PDF
-   statement and match its lines against documents on file; surface the gaps.
+4. ✅ **Statement upload & reconciliation** — `statement_reader.py` reads any SA
+   bank's PDF (decrypts, page-chunks, validated line extraction) and `reconcile.py`
+   (a pure, unit-tested matcher) matches lines to documents and flags the gaps.
 5. ⬜ Reports on demand.
 6. ⬜ The AI CFO agent (tool-calling loop over the database).
 7. ⬜ Web dashboard (FastAPI + HTML; real login added here).

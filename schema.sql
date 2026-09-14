@@ -111,7 +111,8 @@ CREATE TABLE IF NOT EXISTS statement_lines (
   statement_id           INT NOT NULL,
   line_date              DATE NULL,
   description            VARCHAR(255) NULL,
-  amount                 DECIMAL(12,2) NOT NULL,
+  amount                 DECIMAL(12,2) NOT NULL,          -- always positive
+  direction              ENUM('debit','credit') NULL,     -- debit = money out (spending)
   running_balance        DECIMAL(12,2) NULL,
   matched_transaction_id INT NULL,
   match_status           ENUM('matched','unmatched') NOT NULL DEFAULT 'unmatched',

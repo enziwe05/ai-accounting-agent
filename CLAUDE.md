@@ -37,7 +37,26 @@ works. Money is DECIMAL(12,2), not float. Full card/acct numbers never stored (#
 - `llm.py` — the single shared Anthropic client (#6); read_receipt.py now imports it.
 - `test_categorize.py` — 9 pytest tests for the matcher, all green.
 Verified: Drama receipt → review queue (suggestion not applied); Engen → sorted to Fuel by rule.
-Next: Phase 4, statement upload & reconciliation.
+
+**Phase 4 — Statement upload & reconciliation. ✅ DONE & verified (2026-09-14).**
+- `pdf_utils.py` — open_decrypted (handles empty-password encryption on bank PDFs),
+  pages_to_b64, chunk_indices.
+- `statement_reader.py` — reads ANY SA bank PDF in page-chunks (PAGES_PER_CHUNK=3) via
+  Claude document blocks → validated StatementExtraction (bank, account_last4 ONLY (#3),
+  period, opening/closing, lines with debit/credit direction + ISO dates). Stitches chunks.
+  store_statement → documents(type=statement) + statements(account masked ****last4) +
+  statement_lines. Long statements need chunking (single call truncates at max_tokens).
+- `reconcile.py` — pure `match_line()` (amount to the cent, date window ±4d, vendor-in-
+  description tiebreak, ambiguous→None) + `reconcile_statement()` matches debit lines to
+  receipt/invoice transactions, marks statement_lines matched/unmatched. Unmatched debit =
+  the "no document" gap.
+- `process_statement.py` — read → store → reconcile → report unmatched.
+- `test_reconcile.py` — 7 pytest tests (16 total across the project), all green.
+- Added `direction` col to statement_lines. Deps: pypdf, cryptography.
+Verified on a real encrypted 9-page FNB PDF: 443 lines, opening+credits-debits=closing to
+the cent (no lines dropped/dup), account masked to ****5379. Reader is bank-agnostic;
+tested on FNB, untested on Absa/Standard/Nedbank/Capitec (need samples).
+Next: Phase 5, reports on demand.
 
 ## Non-negotiables (do not compromise for convenience)
 
