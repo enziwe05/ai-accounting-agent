@@ -8,8 +8,6 @@ It **prepares** books; it does not file taxes or move money. A human (the owner 
 their accountant) reviews and signs off before anything is treated as final. That
 boundary is kept in every feature.
 
-Built for Eswatini SMEs (amounts in SZL/ZAR, VAT-aware), but the design is general.
-
 > **Status:** early build. **Phase 1 (document reading) is done and tested on real
 > receipts.** Phases 2–8 are planned — see the roadmap below.
 
