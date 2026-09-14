@@ -314,7 +314,8 @@ SYSTEM_PROMPT = (
 
 
 def ask_cfo(question: str, max_turns: int = 8, verbose: bool = True,
-            system_suffix: str = "", history: list | None = None) -> str:
+            system_suffix: str = "", history: list | None = None,
+            files_out: list | None = None) -> str:
     """Run the agentic loop for one question and return the final answer.
 
     system_suffix lets a caller (e.g. WhatsApp) tweak the reply style without
@@ -324,6 +325,9 @@ def ask_cfo(question: str, max_turns: int = 8, verbose: bool = True,
     read AND updated in place (this message and the agent's reply are appended),
     so a caller can keep it and get real back-and-forth memory. Pass nothing for
     a one-off question with no memory (the CLI does this).
+
+    files_out, if given, is a list that any report file the agent generates is
+    appended to, so a caller (e.g. WhatsApp) can deliver the actual file.
     """
     system = SYSTEM_PROMPT + (("\n\n" + system_suffix) if system_suffix else "")
     messages = history if history is not None else []
@@ -350,6 +354,13 @@ def ask_cfo(question: str, max_turns: int = 8, verbose: bool = True,
                         output = func(**block.input) if func else f"Unknown tool {block.name}"
                     except Exception as e:  # tool failure -> tell the model, don't crash
                         output = _json({"error": str(e)})
+                    if files_out is not None and block.name == "generate_report":
+                        try:
+                            saved = json.loads(output).get("saved_file")
+                            if saved:
+                                files_out.append(saved)
+                        except (ValueError, TypeError):
+                            pass
                     results.append({
                         "type": "tool_result",
                         "tool_use_id": block.id,

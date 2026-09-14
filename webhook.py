@@ -35,7 +35,7 @@ from cfo_agent import ask_cfo
 from db import get_connection
 from read_receipt import read_receipt
 from store import save_receipt
-from whatsapp import download_media, send_text
+from whatsapp import download_media, send_document, send_text
 
 VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "")
 APP_SECRET = os.getenv("WHATSAPP_APP_SECRET", "")  # optional; enables signature check
@@ -47,7 +47,10 @@ UPLOADS.mkdir(exist_ok=True)
 WHATSAPP_STYLE = (
     "You are replying over WhatsApp. Keep it short and plain-text: no markdown "
     "tables, no headings. Use simple dashes for lists and *single asterisks* for "
-    "the odd bold word. A few short lines is ideal."
+    "the odd bold word. A few short lines is ideal. "
+    "When you generate a report, the file is sent to the owner as a WhatsApp "
+    "attachment automatically — so DON'T mention any file path or where it was "
+    "saved. Just say the report is attached and give a one-line summary."
 )
 
 # Per-sender conversation memory so follow-up replies keep context (e.g. the
@@ -55,6 +58,47 @@ WHATSAPP_STYLE = (
 # In-memory only: it resets when the server restarts, which is fine for now.
 CONVERSATIONS: dict[str, list] = {}
 MAX_HISTORY = 30  # cap messages kept per sender to bound tokens/memory
+
+# A friendly introduction sent when someone greets the bot or messages for the
+# first time — instead of a generic "hello world".
+WELCOME = (
+    "Hi, I'm your AI bookkeeping assistant. I help keep your business records in order.\n\n"
+    "Here's what I can do:\n"
+    "- Send me a photo of a receipt or slip and I'll read it and file it for you\n"
+    "- Ask me things like \"how much did I spend this month?\" or \"what did I buy at Woolworths?\"\n"
+    "- I'll flag anything that needs your okay before it's final\n\n"
+    "Go ahead — send me a receipt, or ask me a question about your money."
+)
+
+# Short greetings that should trigger the introduction rather than the CFO agent.
+_GREETINGS = {"hi", "hie", "hey", "hello", "hallo", "yebo", "start", "help",
+              "menu", "hi there", "good morning", "good afternoon", "good evening"}
+
+
+def log_message(wa_from: str, direction: str, body: str, kind: str = "text") -> None:
+    """Save one message (in or out) so the owner can read the conversations later.
+
+    Logging must never break message handling, so any failure here is swallowed.
+    """
+    try:
+        conn = get_connection()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO message_log (wa_from, direction, kind, body) "
+                    "VALUES (%s, %s, %s, %s)",
+                    (wa_from, direction, kind, body),
+                )
+        finally:
+            conn.close()
+    except Exception:
+        pass
+
+
+def reply(sender: str, text: str, kind: str = "text") -> None:
+    """Log the outgoing reply, then send it."""
+    log_message(sender, "out", text, kind)
+    send_text(sender, text)
 
 
 def _trim(history: list) -> None:
@@ -115,7 +159,7 @@ def handle_payload(body: dict) -> None:
                 except Exception as e:  # never let one bad message kill the worker
                     sender = msg.get("from")
                     if sender:
-                        send_text(sender, f"Sorry, something went wrong: {e}")
+                        reply(sender, f"Sorry, something went wrong: {e}")
 
 
 def _handle_message(msg: dict) -> None:
@@ -123,21 +167,46 @@ def _handle_message(msg: dict) -> None:
     mtype = msg.get("type")
 
     if mtype == "text":
-        _handle_text(sender, msg["text"]["body"])
+        body = msg["text"]["body"]
+        log_message(sender, "in", body, "text")
+        _handle_text(sender, body)
     elif mtype == "image":
+        log_message(sender, "in", "[receipt photo]", "image")
         _handle_image(sender, msg["image"]["id"])
     elif mtype == "document" and "document" in msg:
+        log_message(sender, "in", "[document]", "document")
         _handle_image(sender, msg["document"]["id"])  # e.g. a PDF invoice
     else:
-        send_text(sender, "Send me a photo of a receipt to file it, or ask a "
-                          "question about your books.")
+        log_message(sender, "in", f"[{mtype} message]", "system")
+        reply(sender, "Send me a photo of a receipt to file it, or ask a "
+                      "question about your books.")
 
 
 def _handle_text(sender: str, text: str) -> None:
     history = CONVERSATIONS.setdefault(sender, [])
-    answer = ask_cfo(text, verbose=False, system_suffix=WHATSAPP_STYLE, history=history)
+
+    # Greet + introduce when the message is just a greeting (so a real first
+    # question still gets a real answer instead of the welcome blurb).
+    if text.strip().lower().strip("!.") in _GREETINGS:
+        history.append({"role": "user", "content": text})
+        history.append({"role": "assistant", "content": WELCOME})
+        _trim(history)
+        reply(sender, WELCOME)
+        return
+
+    files: list[str] = []
+    answer = ask_cfo(text, verbose=False, system_suffix=WHATSAPP_STYLE,
+                     history=history, files_out=files)
     _trim(history)
-    send_text(sender, answer or "I didn't catch that — try asking again.")
+    reply(sender, answer or "I didn't catch that — try asking again.")
+
+    # If the agent produced a report file, send it as a WhatsApp attachment.
+    for path in files:
+        try:
+            send_document(sender, path)
+            log_message(sender, "out", f"[report file: {os.path.basename(path)}]", "document")
+        except Exception as e:
+            reply(sender, f"(I made your report but couldn't attach it: {e})")
 
 
 def _handle_image(sender: str, media_id: str) -> None:
@@ -156,14 +225,14 @@ def _handle_image(sender: str, media_id: str) -> None:
     finally:
         conn.close()
 
-    reply = [f"Filed: *{receipt.vendor}* — {receipt.currency} {receipt.total_amount:.2f}"]
+    lines = [f"Filed: *{receipt.vendor}* — {receipt.currency} {receipt.total_amount:.2f}"]
     if receipt.date:
-        reply.append(f"Date: {receipt.date}")
+        lines.append(f"Date: {receipt.date}")
     if result["outcome"] == "sorted":
-        reply.append(f"Category: {result['category']} (auto-sorted)")
+        lines.append(f"Category: {result['category']} (auto-sorted)")
     else:
-        reply.append(f"Needs your review — suggested: {result.get('suggested_category')}")
-    message = "\n".join(reply)
+        lines.append(f"Needs your review — suggested: {result.get('suggested_category')}")
+    message = "\n".join(lines)
 
     # Remember what we just filed so the owner's follow-up ("what was that?",
     # "what category should it be?") has context.
@@ -172,4 +241,4 @@ def _handle_image(sender: str, media_id: str) -> None:
     history.append({"role": "assistant", "content": message})
     _trim(history)
 
-    send_text(sender, message)
+    reply(sender, message)

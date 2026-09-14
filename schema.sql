@@ -141,3 +141,17 @@ CREATE TABLE IF NOT EXISTS review_queue (
   CONSTRAINT fk_rq_category FOREIGN KEY (suggested_category_id) REFERENCES categories(id),
   KEY idx_rq_status (status)
 ) ENGINE=InnoDB;
+
+
+-- 8) message_log — a plain record of every WhatsApp message in and out ----------
+--    So the owner can read the conversations users had with the assistant.
+CREATE TABLE IF NOT EXISTS message_log (
+  id          BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  wa_from     VARCHAR(32) NOT NULL,                    -- the user's WhatsApp number
+  direction   ENUM('in','out') NOT NULL,               -- 'in' = from user, 'out' = from bot
+  kind        ENUM('text','image','document','system') NOT NULL DEFAULT 'text',
+  body        TEXT NULL,
+  created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  KEY idx_ml_from (wa_from),
+  KEY idx_ml_time (created_at)
+) ENGINE=InnoDB;
