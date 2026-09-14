@@ -50,6 +50,27 @@ WHATSAPP_STYLE = (
     "the odd bold word. A few short lines is ideal."
 )
 
+# Per-sender conversation memory so follow-up replies keep context (e.g. the
+# agent asks a question and the owner's next message is understood as the answer).
+# In-memory only: it resets when the server restarts, which is fine for now.
+CONVERSATIONS: dict[str, list] = {}
+MAX_HISTORY = 30  # cap messages kept per sender to bound tokens/memory
+
+
+def _trim(history: list) -> None:
+    """Keep history from growing forever, without breaking the message sequence.
+
+    Trims oldest messages but always leaves the list starting on a real user
+    turn (a plain string), so we never orphan a tool_result from its tool_use.
+    """
+    while len(history) > MAX_HISTORY:
+        del history[0]
+    while history and not (
+        history[0].get("role") == "user" and isinstance(history[0].get("content"), str)
+    ):
+        del history[0]
+
+
 app = FastAPI()
 
 
@@ -113,7 +134,9 @@ def _handle_message(msg: dict) -> None:
 
 
 def _handle_text(sender: str, text: str) -> None:
-    answer = ask_cfo(text, verbose=False, system_suffix=WHATSAPP_STYLE)
+    history = CONVERSATIONS.setdefault(sender, [])
+    answer = ask_cfo(text, verbose=False, system_suffix=WHATSAPP_STYLE, history=history)
+    _trim(history)
     send_text(sender, answer or "I didn't catch that — try asking again.")
 
 
@@ -140,4 +163,13 @@ def _handle_image(sender: str, media_id: str) -> None:
         reply.append(f"Category: {result['category']} (auto-sorted)")
     else:
         reply.append(f"Needs your review — suggested: {result.get('suggested_category')}")
-    send_text(sender, "\n".join(reply))
+    message = "\n".join(reply)
+
+    # Remember what we just filed so the owner's follow-up ("what was that?",
+    # "what category should it be?") has context.
+    history = CONVERSATIONS.setdefault(sender, [])
+    history.append({"role": "user", "content": f"[I just sent a photo of a receipt from {receipt.vendor}.]"})
+    history.append({"role": "assistant", "content": message})
+    _trim(history)
+
+    send_text(sender, message)
