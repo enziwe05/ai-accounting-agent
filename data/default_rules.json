@@ -1,0 +1,29 @@
+[
+  { "match_field": "vendor", "match_type": "contains", "pattern": "Engen",            "category": "Fuel",                  "priority": 10, "notes": "Engen fuel station" },
+  { "match_field": "vendor", "match_type": "contains", "pattern": "Galp",             "category": "Fuel",                  "priority": 10, "notes": "Galp fuel station" },
+  { "match_field": "vendor", "match_type": "contains", "pattern": "Puma",             "category": "Fuel",                  "priority": 10, "notes": "Puma Energy fuel" },
+  { "match_field": "vendor", "match_type": "contains", "pattern": "Total",            "category": "Fuel",                  "priority": 10, "notes": "TotalEnergies fuel" },
+  { "match_field": "vendor", "match_type": "contains", "pattern": "Shell",            "category": "Fuel",                  "priority": 10, "notes": "Shell fuel" },
+
+  { "match_field": "vendor", "match_type": "contains", "pattern": "EEC",              "category": "Utilities",             "priority": 10, "notes": "Eswatini Electricity Company" },
+  { "match_field": "vendor", "match_type": "contains", "pattern": "Eswatini Electricity", "category": "Utilities",         "priority": 10, "notes": "Eswatini Electricity Company" },
+  { "match_field": "vendor", "match_type": "contains", "pattern": "Water Services",   "category": "Utilities",             "priority": 10, "notes": "Eswatini Water Services (EWSC)" },
+  { "match_field": "vendor", "match_type": "contains", "pattern": "EWSC",             "category": "Utilities",             "priority": 10, "notes": "Eswatini Water Services" },
+
+  { "match_field": "vendor", "match_type": "contains", "pattern": "MTN",              "category": "Airtime & Data",        "priority": 10, "notes": "MTN airtime/data" },
+  { "match_field": "vendor", "match_type": "contains", "pattern": "Eswatini Mobile",  "category": "Airtime & Data",        "priority": 10, "notes": "Eswatini Mobile airtime/data" },
+
+  { "match_field": "vendor", "match_type": "contains", "pattern": "Pick n Pay",       "category": "Stock / Inventory",     "priority": 50, "notes": "Could be stock or groceries — review if unusual" },
+  { "match_field": "vendor", "match_type": "contains", "pattern": "Shoprite",         "category": "Stock / Inventory",     "priority": 50, "notes": "Could be stock or groceries" },
+  { "match_field": "vendor", "match_type": "contains", "pattern": "Spar",             "category": "Stock / Inventory",     "priority": 50, "notes": "Could be stock or groceries" },
+  { "match_field": "vendor", "match_type": "contains", "pattern": "Boxer",            "category": "Stock / Inventory",     "priority": 50, "notes": "Wholesale — usually stock" },
+  { "match_field": "vendor", "match_type": "contains", "pattern": "OK Foods",         "category": "Stock / Inventory",     "priority": 50, "notes": "Could be stock or groceries" },
+
+  { "match_field": "vendor", "match_type": "contains", "pattern": "KFC",              "category": "Meals & Entertainment", "priority": 20, "notes": "Fast food — confirm business purpose" },
+  { "match_field": "vendor", "match_type": "contains", "pattern": "Nando",            "category": "Meals & Entertainment", "priority": 20, "notes": "Restaurant — confirm business purpose" },
+  { "match_field": "vendor", "match_type": "contains", "pattern": "Debonairs",        "category": "Meals & Entertainment", "priority": 20, "notes": "Restaurant — confirm business purpose" },
+
+  { "match_field": "vendor", "match_type": "contains", "pattern": "Bank Charge",      "category": "Bank Charges",          "priority": 20, "notes": "Bank fee" },
+  { "match_field": "description", "match_type": "contains", "pattern": "Levies",      "category": "Rent",                  "priority": 30, "notes": "Body-corporate levies (rental)" },
+  { "match_field": "description", "match_type": "contains", "pattern": "Rent",        "category": "Rent",                  "priority": 20, "notes": "Rent line item" }
+]

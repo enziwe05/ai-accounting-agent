@@ -23,7 +23,20 @@ statements, statement_lines, review_queue), `db.py` (PyMySQL connection from env
 `init_db.py` (creates DB + tables, safe to re-run). Runs against **MAMP MySQL**
 (localhost:3306, root/root locally). All 9 foreign keys verified; write/read round-trip
 works. Money is DECIMAL(12,2), not float. Full card/acct numbers never stored (#3).
-Next: Phase 3, categorization as code (rules engine → LLM fallback → review queue).
+
+**Phase 3 — Categorization as code. ✅ DONE & verified (2026-09-14).**
+- `categorize.py` — pure `match_rule(vendor, description, rules)` rules engine
+  (contains/equals/regex, priority order, case-insensitive) + `categorize_transaction()`.
+  Rule match → apply + status 'sorted'. No match → LLM `suggest_category()` (structured
+  output) → row in `review_queue` (pending), status 'needs_review', category NOT applied (#1/#2).
+- `data/default_categories.json` (12) + `data/default_rules.json` (22 Eswatini rules);
+  `seed_db.py` loads them (idempotent).
+- `store.py` — `save_receipt(receipt)` → documents + transactions rows.
+- `process_receipt.py` — end-to-end read → store → categorize.
+- `llm.py` — the single shared Anthropic client (#6); read_receipt.py now imports it.
+- `test_categorize.py` — 9 pytest tests for the matcher, all green.
+Verified: Drama receipt → review queue (suggestion not applied); Engen → sorted to Fuel by rule.
+Next: Phase 4, statement upload & reconciliation.
 
 ## Non-negotiables (do not compromise for convenience)
 

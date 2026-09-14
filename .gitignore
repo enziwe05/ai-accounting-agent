@@ -6,6 +6,7 @@ __pycache__/
 *.pyc
 .venv/
 venv/
+.pytest_cache/
 
 # Local receipt files used for testing (keep real financial docs out of git)
 receipts/

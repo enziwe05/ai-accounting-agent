@@ -22,18 +22,9 @@ import base64
 import sys
 from pathlib import Path
 
-import anthropic
 from pydantic import BaseModel, Field
 
-# Load a local .env file if python-dotenv is installed. This lets you keep the
-# API key in a .env file during development instead of setting it every time.
-# It's optional — if the package isn't there we just skip it.
-try:
-    from dotenv import load_dotenv
-
-    load_dotenv()
-except ImportError:
-    pass
+from llm import MODEL, client  # the one shared Anthropic client (#6)
 
 
 # --- The shape of the data we want back -------------------------------------
@@ -61,12 +52,6 @@ class Receipt(BaseModel):
     # traced back to the file it came from (non-negotiable #4).
     source_file: str = Field(default="", description="Path of the source image/PDF.")
 
-
-# --- One client, reused (non-negotiable #6) ---------------------------------
-# anthropic.Anthropic() reads ANTHROPIC_API_KEY from the environment for us.
-client = anthropic.Anthropic()
-
-MODEL = "claude-opus-4-8"
 
 SYSTEM_PROMPT = (
     "You read photographed receipts, invoices and slips for a bookkeeping "

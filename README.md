@@ -8,8 +8,9 @@ It **prepares** books; it does not file taxes or move money. A human (the owner 
 their accountant) reviews and signs off before anything is treated as final. That
 boundary is kept in every feature.
 
-> **Status:** early build. **Phases 1–2 are done** — document reading (tested on real
-> receipts) and the MySQL storage schema. Phases 3–8 are planned — see the roadmap below.
+> **Status:** early build. **Phases 1–3 are done** — document reading (tested on real
+> receipts), the MySQL storage schema, and categorization (rules engine + review-queue
+> fallback, unit-tested). Phases 4–8 are planned — see the roadmap below.
 
 ## What it will do
 
@@ -63,7 +64,9 @@ These are non-negotiable and enforced in code, not just intention:
 2. ✅ **Storage schema** — `schema.sql` + `init_db.py`. Seven MySQL tables
    (documents, transactions, categories, category_rules, statements,
    statement_lines, review_queue) with foreign keys; money as exact DECIMAL.
-3. ⬜ Categorization as code (rules engine first, model fallback → review queue).
+3. ✅ **Categorization as code** — `categorize.py` (a pure, unit-tested rules
+   engine) + `seed_db.py` starter rules. Rules decide; the model only *suggests*
+   into the `review_queue` when no rule matches — never auto-applied.
 4. ⬜ Statement upload & reconciliation (matches statement lines to documents).
 5. ⬜ Reports on demand.
 6. ⬜ The AI CFO agent (tool-calling loop over the database).
