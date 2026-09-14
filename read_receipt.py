@@ -37,6 +37,20 @@ DEFAULT_CURRENCY = os.getenv("DEFAULT_CURRENCY", "ZAR")
 # and the SDK refuses to hand us anything that doesn't match. If a field can be
 # missing on a real receipt (VAT often is), we make it optional.
 
+class LineItem(BaseModel):
+    """One item/line printed on the slip (what was actually bought)."""
+
+    description: str = Field(description="The item name/description exactly as printed.")
+    quantity: float | None = Field(
+        default=None,
+        description="How many, if the slip shows a quantity, otherwise null.",
+    )
+    amount: float | None = Field(
+        default=None,
+        description="The line total for this item (price paid), or null if not shown.",
+    )
+
+
 class Receipt(BaseModel):
     vendor: str = Field(description="The shop or supplier name, exactly as printed.")
     date: str = Field(
@@ -44,6 +58,11 @@ class Receipt(BaseModel):
         "Empty string if it cannot be read."
     )
     total_amount: float = Field(description="The grand total actually paid.")
+    line_items: list[LineItem] = Field(
+        default_factory=list,
+        description="Every individual item/line printed on the slip — what was bought. "
+        "Empty list if the slip shows no itemised lines (e.g. only a total).",
+    )
     vat_amount: float | None = Field(
         default=None,
         description="The VAT/tax amount if the receipt shows one, otherwise null.",
@@ -65,7 +84,10 @@ SYSTEM_PROMPT = (
     "symbol 'R') and VAT is 15%. Extract only what is actually printed on the "
     "document. Do not guess or invent figures. If a value is unreadable, leave it "
     "empty (for text) or null (for numbers) rather than making something up. "
-    "Amounts are the numeric totals only, without the currency symbol."
+    "Amounts are the numeric totals only, without the currency symbol. "
+    "Also list every individual item printed on the slip in line_items (what was "
+    "bought), copying each item's description as printed; include its quantity and "
+    "line price when shown, otherwise leave those null."
 )
 
 # Map file extensions to the media type the API expects for image blocks.
@@ -170,6 +192,12 @@ def main() -> None:
     vat = f"{receipt.currency} {receipt.vat_amount:.2f}" if receipt.vat_amount is not None else "(none shown)"
     print(f"  VAT    : {vat}")
     print(f"  Source : {receipt.source_file}")
+    if receipt.line_items:
+        print("  Items  :")
+        for item in receipt.line_items:
+            qty = f"{item.quantity:g} x " if item.quantity else ""
+            price = f" — {receipt.currency} {item.amount:.2f}" if item.amount is not None else ""
+            print(f"    - {qty}{item.description}{price}")
 
     # ...and the raw JSON, so you can see exactly what the schema captured.
     print("\nAs JSON:")
