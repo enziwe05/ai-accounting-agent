@@ -11,10 +11,11 @@ boundary is kept in every feature.
 Built for **South African SMEs** — amounts in ZAR, 15% VAT, and a bank-statement
 reader that handles any South African bank.
 
-> **Status:** early build. **Phases 1–6 are done** — document reading (tested on real
-> receipts), MySQL storage, categorization (rules + review-queue fallback), bank-statement
-> reconciliation (any SA bank PDF), reports on demand (Excel export), and an AI CFO agent
-> that answers plain-English questions and produces reports. Phases 7–8 are planned below.
+> **Status:** working MVP. **The full pipeline is built** — document reading (tested on
+> real receipts), MySQL storage, categorization (rules + review-queue fallback),
+> bank-statement reconciliation (any SA bank PDF), reports (Excel export), an AI CFO agent,
+> and a **WhatsApp** front end (send a receipt photo or ask a question in chat). The web
+> dashboard is deferred in favour of a WhatsApp-first experience.
 
 ## What it will do
 
@@ -80,8 +81,10 @@ These are non-negotiable and enforced in code, not just intention:
 6. ✅ **The AI CFO agent** — `cfo_agent.py`, a tool-calling loop over the database
    (query_transactions, get_spend_summary, get_review_queue, generate_report).
    Answers plain-English questions; reads and reports only, never changes the books.
-7. ⬜ Web dashboard (FastAPI + HTML; real login added here).
-8. ⬜ WhatsApp (last — develop via ngrok, then an always-on host).
+7. ⏸️ Web dashboard (FastAPI + HTML) — **deferred** in favour of WhatsApp-first.
+8. ✅ **WhatsApp** — `webhook.py` (FastAPI) + `whatsapp.py` (Meta Cloud API).
+   Send a receipt photo → it's read, filed and categorized; ask a question → the
+   CFO agent answers. Develop via ngrok, then an always-on host.
 
 ## Try Phase 1
 

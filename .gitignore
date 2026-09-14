@@ -19,3 +19,6 @@ receipts/
 # Generated report files (may contain financial data)
 reports/
 *.xlsx
+
+# WhatsApp-uploaded media (real receipts)
+uploads/

@@ -163,15 +163,21 @@ SYSTEM_PROMPT = (
 )
 
 
-def ask_cfo(question: str, max_turns: int = 8, verbose: bool = True) -> str:
-    """Run the agentic loop for one question and return the final answer."""
+def ask_cfo(question: str, max_turns: int = 8, verbose: bool = True,
+            system_suffix: str = "") -> str:
+    """Run the agentic loop for one question and return the final answer.
+
+    system_suffix lets a caller (e.g. WhatsApp) tweak the reply style without
+    changing the base prompt.
+    """
+    system = SYSTEM_PROMPT + (("\n\n" + system_suffix) if system_suffix else "")
     messages = [{"role": "user", "content": question}]
 
     for _ in range(max_turns):
         response = client.messages.create(
             model=MODEL,
             max_tokens=4000,
-            system=SYSTEM_PROMPT,
+            system=system,
             tools=TOOLS,
             messages=messages,
         )

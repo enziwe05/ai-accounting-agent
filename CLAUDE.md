@@ -77,8 +77,23 @@ expenses 23,369, net 21,631, correct category breakdown; xlsx exported.
   minus-sign chars) — makes all scripts robust for the user.
 Verified live on sample data: "biggest spend + net profit Feb" → correct reasoned answer
 (Stock R11,700, net R21,631, ~48% margin); "generate a report" → wrote reports/report_2026-02.xlsx.
-Next: Phase 7, web dashboard (FastAPI + HTML, read-only first, then upload + approval;
-add real login here before it leaves the machine).
+**Phase 8 — WhatsApp integration. ✅ code DONE & tested (2026-09-14); needs live wiring.**
+- `whatsapp.py` — Meta Cloud API client: send_text(to, body), download_media(id) (2-step:
+  get URL then bytes). Creds from env (WHATSAPP_TOKEN/PHONE_NUMBER_ID).
+- `webhook.py` — FastAPI: GET /webhook verification (echoes hub.challenge if verify_token
+  matches WHATSAPP_VERIFY_TOKEN); POST /webhook acks fast + processes in BackgroundTasks.
+  Optional HMAC signature check if WHATSAPP_APP_SECRET set. Routes: text→ask_cfo (WhatsApp
+  plain-text style suffix); image/pdf→download→read_receipt→save_receipt→categorize→reply.
+  Replies are only direct responses to inbound msgs (24h window, #2 respected).
+- `test_webhook.py` — 3 TestClient tests (24 total, all green). ask_cfo gained system_suffix.
+- uploads/ (gitignored) holds received media. Deps: fastapi, uvicorn, requests, httpx.
+NOTE: port 8000 is blocked on this Windows box (winerror 10013) — run uvicorn on 8001.
+STILL TO DO (needs the user): install ngrok, run `uvicorn webhook:app --port 8001` + `ngrok
+http 8001`, set Meta webhook Callback URL=<ngrok>/webhook + verify token, subscribe 'messages',
+then send a real WhatsApp msg to test. Test token expires ~24h → make a permanent System User token.
+
+Phase 7 (web dashboard) was DEFERRED at the user's request — WhatsApp-first MVP. All 8 build
+phases' backend now exists; dashboard remains optional/future.
 
 ## Non-negotiables (do not compromise for convenience)
 
