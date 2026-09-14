@@ -17,6 +17,14 @@ extracted correctly; on an unreadable date it returned "" instead of guessing
 Note: the sample folder also has a multi-line *account statement* (ZAR) — that's
 the Phase 4 reconciliation document type, not a single-receipt input.
 
+**Phase 2 — Storage schema. ✅ DONE & verified (2026-09-14).**
+`schema.sql` (7 tables: categories, category_rules, documents, transactions,
+statements, statement_lines, review_queue), `db.py` (PyMySQL connection from env),
+`init_db.py` (creates DB + tables, safe to re-run). Runs against **MAMP MySQL**
+(localhost:3306, root/root locally). All 9 foreign keys verified; write/read round-trip
+works. Money is DECIMAL(12,2), not float. Full card/acct numbers never stored (#3).
+Next: Phase 3, categorization as code (rules engine → LLM fallback → review queue).
+
 ## Non-negotiables (do not compromise for convenience)
 
 1. Categorization & reconciliation matching run in **code, not model judgement**
