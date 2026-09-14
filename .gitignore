@@ -1,0 +1,16 @@
+# Secrets — never commit
+.env
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Local receipt files used for testing (keep real financial docs out of git)
+receipts/
+*.jpg
+*.jpeg
+*.png
+*.webp
+*.pdf
