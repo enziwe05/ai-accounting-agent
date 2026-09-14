@@ -11,10 +11,10 @@ boundary is kept in every feature.
 Built for **South African SMEs** — amounts in ZAR, 15% VAT, and a bank-statement
 reader that handles any South African bank.
 
-> **Status:** early build. **Phases 1–5 are done** — document reading (tested on real
-> receipts), the MySQL storage schema, categorization (rules + review-queue fallback),
-> bank-statement reconciliation (any SA bank PDF), and reports on demand (P&L + spend
-> breakdown, Excel export). All unit-tested. Phases 6–8 are planned — see the roadmap.
+> **Status:** early build. **Phases 1–6 are done** — document reading (tested on real
+> receipts), MySQL storage, categorization (rules + review-queue fallback), bank-statement
+> reconciliation (any SA bank PDF), reports on demand (Excel export), and an AI CFO agent
+> that answers plain-English questions and produces reports. Phases 7–8 are planned below.
 
 ## What it will do
 
@@ -77,7 +77,9 @@ These are non-negotiable and enforced in code, not just intention:
 5. ✅ **Reports on demand** — `reports.py` builds a P&L and spend-by-category from
    categorized transactions (pure, unit-tested aggregator) and exports to Excel.
    One `generate_report()` the dashboard button and the CFO agent both call.
-6. ⬜ The AI CFO agent (tool-calling loop over the database).
+6. ✅ **The AI CFO agent** — `cfo_agent.py`, a tool-calling loop over the database
+   (query_transactions, get_spend_summary, get_review_queue, generate_report).
+   Answers plain-English questions; reads and reports only, never changes the books.
 7. ⬜ Web dashboard (FastAPI + HTML; real login added here).
 8. ⬜ WhatsApp (last — develop via ngrok, then an always-on host).
 

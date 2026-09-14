@@ -11,8 +11,16 @@ the real values still come from .env.
 """
 
 import os
+import sys
 
 import pymysql
+
+# Force UTF-8 output so printed amounts/symbols never crash on the Windows console.
+if hasattr(sys.stdout, "reconfigure"):
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
 
 try:
     from dotenv import load_dotenv

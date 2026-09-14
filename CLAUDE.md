@@ -67,7 +67,18 @@ tested on FNB, untested on Absa/Standard/Nedbank/Capitec (need samples).
 - Reports write to reports/*.xlsx (gitignored).
 Verified: seeded 10 sample SA txns (uploaded_by='sample-data') → Feb report income 45,000,
 expenses 23,369, net 21,631, correct category breakdown; xlsx exported.
-Next: Phase 6, the AI CFO agent (tool-calling loop; generate_report is one of its tools).
+**Phase 6 — AI CFO agent. ✅ DONE & verified (2026-09-14).**
+- `cfo_agent.py` — manual agentic loop (`ask_cfo()`): messages.create with tools → if
+  stop_reason='tool_use', dispatch each tool_use block, feed tool_result back, loop to
+  end_turn. Read-only tools: query_transactions, get_spend_summary, get_review_queue,
+  generate_report (Phase 5). System prompt: SA CFO, ZAR, READS/REPORTS only — never
+  changes the books. CLI: `python cfo_agent.py "question"` or interactive REPL.
+- `llm.py`/`db.py` now force UTF-8 stdout (Windows console was crashing prints on ZAR/
+  minus-sign chars) — makes all scripts robust for the user.
+Verified live on sample data: "biggest spend + net profit Feb" → correct reasoned answer
+(Stock R11,700, net R21,631, ~48% margin); "generate a report" → wrote reports/report_2026-02.xlsx.
+Next: Phase 7, web dashboard (FastAPI + HTML, read-only first, then upload + approval;
+add real login here before it leaves the machine).
 
 ## Non-negotiables (do not compromise for convenience)
 
