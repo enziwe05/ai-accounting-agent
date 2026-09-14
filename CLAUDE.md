@@ -56,7 +56,18 @@ Verified: Drama receipt → review queue (suggestion not applied); Engen → sor
 Verified on a real encrypted 9-page FNB PDF: 443 lines, opening+credits-debits=closing to
 the cent (no lines dropped/dup), account masked to ****5379. Reader is bank-agnostic;
 tested on FNB, untested on Absa/Standard/Nedbank/Capitec (need samples).
-Next: Phase 5, reports on demand.
+
+**Phase 5 — Reports on demand. ✅ DONE & verified (2026-09-14).**
+- `reports.py` — pure `summarize(rows)` → Report (income/expense/net, spend_by_category
+  + income_by_category sorted desc, uncategorized_count). `build_report()` fetches from
+  transactions⋈categories (optional period filter); `render_text()`; `export_xlsx()` via
+  openpyxl; `generate_report(period_start, period_end, out_path)` = the ONE entry point the
+  dashboard button AND the CFO agent's generate_report tool will both call.
+- `test_reports.py` — 5 pytest tests (21 total, all green). Dep: openpyxl.
+- Reports write to reports/*.xlsx (gitignored).
+Verified: seeded 10 sample SA txns (uploaded_by='sample-data') → Feb report income 45,000,
+expenses 23,369, net 21,631, correct category breakdown; xlsx exported.
+Next: Phase 6, the AI CFO agent (tool-calling loop; generate_report is one of its tools).
 
 ## Non-negotiables (do not compromise for convenience)
 

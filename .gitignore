@@ -15,3 +15,7 @@ receipts/
 *.png
 *.webp
 *.pdf
+
+# Generated report files (may contain financial data)
+reports/
+*.xlsx
