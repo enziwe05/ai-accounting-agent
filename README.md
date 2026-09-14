@@ -8,8 +8,8 @@ It **prepares** books; it does not file taxes or move money. A human (the owner 
 their accountant) reviews and signs off before anything is treated as final. That
 boundary is kept in every feature.
 
-> **Status:** early build. **Phase 1 (document reading) is done and tested on real
-> receipts.** Phases 2–8 are planned — see the roadmap below.
+> **Status:** early build. **Phases 1–2 are done** — document reading (tested on real
+> receipts) and the MySQL storage schema. Phases 3–8 are planned — see the roadmap below.
 
 ## What it will do
 
@@ -60,8 +60,9 @@ These are non-negotiable and enforced in code, not just intention:
 
 1. ✅ **Document reading, standalone** — `read_receipt.py`. Image/PDF in → validated
    `Receipt` out. Tested on real hand-held till receipts.
-2. ⬜ Storage schema (MySQL: documents, transactions, categories, category_rules,
-   statements, statement_lines, review_queue).
+2. ✅ **Storage schema** — `schema.sql` + `init_db.py`. Seven MySQL tables
+   (documents, transactions, categories, category_rules, statements,
+   statement_lines, review_queue) with foreign keys; money as exact DECIMAL.
 3. ⬜ Categorization as code (rules engine first, model fallback → review queue).
 4. ⬜ Statement upload & reconciliation (matches statement lines to documents).
 5. ⬜ Reports on demand.
