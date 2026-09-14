@@ -19,12 +19,17 @@ Non-negotiables honoured here (see CLAUDE.md):
 """
 
 import base64
+import os
 import sys
 from pathlib import Path
 
 from pydantic import BaseModel, Field
 
 from llm import MODEL, client  # the one shared Anthropic client (#6)
+
+# South African product: home currency is the Rand. Detected currency on the
+# document always wins; this is only the fallback when a slip doesn't show one.
+DEFAULT_CURRENCY = os.getenv("DEFAULT_CURRENCY", "ZAR")
 
 
 # --- The shape of the data we want back -------------------------------------
@@ -44,9 +49,10 @@ class Receipt(BaseModel):
         description="The VAT/tax amount if the receipt shows one, otherwise null.",
     )
     currency: str = Field(
-        default="SZL",
-        description="ISO currency code. Eswatini receipts are SZL (lilangeni); "
-        "South African ones are ZAR.",
+        default=DEFAULT_CURRENCY,
+        description="ISO currency code. Almost always ZAR (South African Rand, 'R'). "
+        "Read the symbol/code printed on the slip; only fall back to ZAR if none "
+        "is shown.",
     )
     # Not extracted by the model — we set this ourselves so every figure can be
     # traced back to the file it came from (non-negotiable #4).
@@ -54,10 +60,11 @@ class Receipt(BaseModel):
 
 
 SYSTEM_PROMPT = (
-    "You read photographed receipts, invoices and slips for a bookkeeping "
-    "assistant in Eswatini. Extract only what is actually printed on the "
-    "document. Do not guess or invent figures. If a value is unreadable, leave "
-    "it empty (for text) or null (for numbers) rather than making something up. "
+    "You read photographed receipts, invoices and slips for a South African "
+    "small-business bookkeeping assistant. Amounts are in South African Rand (ZAR, "
+    "symbol 'R') and VAT is 15%. Extract only what is actually printed on the "
+    "document. Do not guess or invent figures. If a value is unreadable, leave it "
+    "empty (for text) or null (for numbers) rather than making something up. "
     "Amounts are the numeric totals only, without the currency symbol."
 )
 

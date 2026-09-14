@@ -82,9 +82,9 @@ def suggest_category(vendor: str | None, description: str | None,
         model=MODEL,
         max_tokens=500,
         system=(
-            "You help categorize a business transaction for bookkeeping in Eswatini. "
-            "Choose the single best-fitting category from the list you are given. "
-            "If none fit well, answer 'Unknown'. Do not invent categories."
+            "You help categorize a South African small-business transaction for "
+            "bookkeeping. Choose the single best-fitting category from the list you "
+            "are given. If none fit well, answer 'Unknown'. Do not invent categories."
         ),
         messages=[
             {

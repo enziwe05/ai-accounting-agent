@@ -3,12 +3,13 @@
   { "name": "Fuel", "kind": "expense" },
   { "name": "Rent", "kind": "expense" },
   { "name": "Utilities", "kind": "expense" },
-  { "name": "Airtime & Data", "kind": "expense" },
+  { "name": "Phone & Internet", "kind": "expense" },
   { "name": "Stock / Inventory", "kind": "expense" },
   { "name": "Meals & Entertainment", "kind": "expense" },
   { "name": "Salaries & Wages", "kind": "expense" },
-  { "name": "Transport", "kind": "expense" },
+  { "name": "Transport & Travel", "kind": "expense" },
   { "name": "Bank Charges", "kind": "expense" },
   { "name": "Office Supplies", "kind": "expense" },
+  { "name": "Software & Subscriptions", "kind": "expense" },
   { "name": "Professional Fees", "kind": "expense" }
 ]

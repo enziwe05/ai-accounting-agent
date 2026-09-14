@@ -56,7 +56,7 @@ CREATE TABLE IF NOT EXISTS documents (
   doc_date       DATE NULL,                       -- NULL when unreadable (never guessed)
   total_amount   DECIMAL(12,2) NULL,
   vat_amount     DECIMAL(12,2) NULL,
-  currency       CHAR(3) NOT NULL DEFAULT 'SZL',
+  currency       CHAR(3) NOT NULL DEFAULT 'ZAR',
   paid_by_last4  CHAR(4) NULL,                    -- last 4 digits only, never full (#3)
   uploaded_by    VARCHAR(100) NULL,
   raw_extraction JSON NULL,                       -- full validated reader output
@@ -76,7 +76,7 @@ CREATE TABLE IF NOT EXISTS transactions (
   description  VARCHAR(255) NULL,
   amount       DECIMAL(12,2) NOT NULL,
   vat_amount   DECIMAL(12,2) NULL,
-  currency     CHAR(3) NOT NULL DEFAULT 'SZL',
+  currency     CHAR(3) NOT NULL DEFAULT 'ZAR',
   category_id  INT NULL,                          -- set by a rule, or after review
   source       ENUM('photo','invoice','statement','schedule') NOT NULL DEFAULT 'photo',
   status       ENUM('sorted','needs_review','no_document') NOT NULL DEFAULT 'needs_review',
@@ -97,7 +97,7 @@ CREATE TABLE IF NOT EXISTS statements (
   period_end       DATE NULL,
   opening_balance  DECIMAL(12,2) NULL,
   closing_balance  DECIMAL(12,2) NULL,
-  currency         CHAR(3) NOT NULL DEFAULT 'SZL',
+  currency         CHAR(3) NOT NULL DEFAULT 'ZAR',
   created_at       DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT fk_stmt_document FOREIGN KEY (document_id) REFERENCES documents(id)
 ) ENGINE=InnoDB;

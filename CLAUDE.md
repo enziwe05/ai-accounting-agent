@@ -29,7 +29,8 @@ works. Money is DECIMAL(12,2), not float. Full card/acct numbers never stored (#
   (contains/equals/regex, priority order, case-insensitive) + `categorize_transaction()`.
   Rule match → apply + status 'sorted'. No match → LLM `suggest_category()` (structured
   output) → row in `review_queue` (pending), status 'needs_review', category NOT applied (#1/#2).
-- `data/default_categories.json` (12) + `data/default_rules.json` (22 Eswatini rules);
+- `data/default_categories.json` (13) + `data/default_rules.json` (~35 South African
+  example rules — editable starter template per business);
   `seed_db.py` loads them (idempotent).
 - `store.py` — `save_receipt(receipt)` → documents + transactions rows.
 - `process_receipt.py` — end-to-end read → store → categorize.
@@ -66,7 +67,14 @@ Next: Phase 4, statement upload & reconciliation.
   guarantees a validated `Receipt` (satisfies non-negotiable #5).
 - **Secrets:** `ANTHROPIC_API_KEY` from the environment (optionally via a local,
   git-ignored `.env` loaded by python-dotenv).
-- **Currency default SZL** (Eswatini lilangeni); ZAR appears on South African slips.
+- **Market: South Africa.** Home currency ZAR (South African Rand, "R"); VAT is 15%.
+  `DEFAULT_CURRENCY` env sets the fallback; detected currency on a document still wins.
+- **Commercial product** — standalone SaaS to be sold to South African SMEs. NOT tied to
+  m26 (only shares the local MAMP MySQL *server*; the `bookkeeper` database is separate).
+  Multi-tenant support (per-business data/rules/login) is a known future need, added around
+  Phase 7 (auth) — not built yet; the current core is single-tenant.
+- **Bank-statement reader must handle ALL South African banks** (FNB, Absa, Standard Bank,
+  Nedbank, Capitec, TymeBank, Investec, etc.) generically from a PDF — not one bank hardcoded.
 
 ## Build order (do not skip ahead)
 

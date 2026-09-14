@@ -35,6 +35,8 @@ def seed_rules(cur, category_ids: dict) -> int:
     rules = json.loads((DATA_DIR / "default_rules.json").read_text("utf-8"))
     added = 0
     for rule in rules:
+        if not isinstance(rule, dict):
+            continue  # skip the human-readable NOTE strings at the top of the file
         category_id = category_ids.get(rule["category"])
         if category_id is None:
             print(f"  ! skipping rule for unknown category '{rule['category']}'")
