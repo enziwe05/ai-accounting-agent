@@ -16,6 +16,7 @@ Usage:
 
 import json
 import sys
+from datetime import date
 from pathlib import Path
 
 from db import get_connection
@@ -59,6 +60,38 @@ def tool_query_transactions(category=None, vendor=None, period_start=None,
     finally:
         conn.close()
     return _json({"count": len(rows), "transactions": rows})
+
+
+def tool_list_recent_uploads(uploaded_on=None, uploaded_since=None, limit=20) -> str:
+    """List transactions by WHEN THEY WERE ADDED (upload date), newest first.
+
+    This is different from query_transactions, which filters by the date printed
+    on the slip. Use this for "what came in / was posted / was added today (or
+    recently)". uploaded_on = a single YYYY-MM-DD day; uploaded_since = from that
+    date onwards.
+    """
+    sql = """SELECT t.id, d.vendor, t.amount, t.currency, c.name AS category,
+                    t.status, t.txn_date AS receipt_date,
+                    DATE(t.created_at) AS uploaded_on
+             FROM transactions t
+             JOIN documents d ON d.id = t.document_id
+             LEFT JOIN categories c ON c.id = t.category_id
+             WHERE 1=1"""
+    params = []
+    if uploaded_on:
+        sql += " AND DATE(t.created_at) = %s"; params.append(uploaded_on)
+    if uploaded_since:
+        sql += " AND t.created_at >= %s"; params.append(uploaded_since)
+    sql += " ORDER BY t.created_at DESC LIMIT %s"; params.append(int(limit))
+
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(sql, params)
+            rows = cur.fetchall()
+    finally:
+        conn.close()
+    return _json({"count": len(rows), "uploads": rows})
 
 
 def tool_get_spend_summary(period_start=None, period_end=None) -> str:
@@ -204,6 +237,7 @@ def tool_generate_report(period_start=None, period_end=None) -> str:
 
 DISPATCH = {
     "query_transactions": tool_query_transactions,
+    "list_recent_uploads": tool_list_recent_uploads,
     "get_spend_summary": tool_get_spend_summary,
     "get_document_details": tool_get_document_details,
     "set_category": tool_set_category,
@@ -232,6 +266,22 @@ TOOLS = [
                 **_PERIOD,
                 "status": {"type": "string", "description": "sorted | needs_review | no_document (optional)."},
                 "limit": {"type": "integer", "description": "Max rows (default 50)."},
+            },
+        },
+    },
+    {
+        "name": "list_recent_uploads",
+        "description": "List transactions by WHEN THEY WERE ADDED/UPLOADED (newest first), "
+                       "not by the date printed on the slip. Use this whenever the owner asks "
+                       "what was 'posted', 'added', 'came in', 'sent', or 'captured' today or "
+                       "recently. uploaded_on = one day (YYYY-MM-DD); uploaded_since = from a "
+                       "date onwards.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "uploaded_on": {"type": "string", "description": "A single day, YYYY-MM-DD (optional)."},
+                "uploaded_since": {"type": "string", "description": "From this date onwards, YYYY-MM-DD (optional)."},
+                "limit": {"type": "integer", "description": "Max rows (default 20)."},
             },
         },
     },
@@ -329,7 +379,22 @@ def ask_cfo(question: str, max_turns: int = 8, verbose: bool = True,
     files_out, if given, is a list that any report file the agent generates is
     appended to, so a caller (e.g. WhatsApp) can deliver the actual file.
     """
-    system = SYSTEM_PROMPT + (("\n\n" + system_suffix) if system_suffix else "")
+    # Tell the agent what "today" is, so relative periods ("this month", "last
+    # month", "this year") resolve correctly — the model doesn't know the date.
+    today = date.today()
+    date_note = (
+        f"Today's date is {today.isoformat()} ({today.strftime('%d %B %Y')}). "
+        "Work out any relative period from this: 'this month' means the 1st to the "
+        "last day of the current calendar month, 'last month' the month before, "
+        "'this year' from 1 January of the current year. Pass the dates as "
+        "period_start/period_end (YYYY-MM-DD) to the tools.\n\n"
+        "Careful with two different dates: the date PRINTED on a slip (its receipt "
+        "date) versus WHEN it was added/uploaded. If the owner asks what was 'posted', "
+        "'added', 'came in', 'sent', or 'captured' today or recently, they mean the "
+        "upload date — use list_recent_uploads (uploaded_on / uploaded_since), not the "
+        "receipt-date period tools."
+    )
+    system = SYSTEM_PROMPT + "\n\n" + date_note + (("\n\n" + system_suffix) if system_suffix else "")
     messages = history if history is not None else []
     messages.append({"role": "user", "content": question})
 
