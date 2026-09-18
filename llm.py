@@ -6,6 +6,7 @@ exactly one client instance for the whole process — never a new one per call.
 The API key is read from the environment (non-negotiable #7).
 """
 
+import os
 import sys
 
 import anthropic
@@ -28,4 +29,12 @@ except ImportError:
 # One client, created once, reused everywhere.
 client = anthropic.Anthropic()
 
+# The "thinking" model: the CFO agent's reasoning, tool-calling and judgement.
 MODEL = "claude-opus-4-8"
+
+# The "reading" model: pulling structured fields off a photographed receipt or a
+# bank-statement page. This is a simpler, high-volume job that a smaller, much
+# cheaper model handles just as well — so we don't pay Opus prices per slip.
+# Override either with an env var if you want to tune cost vs. accuracy per client.
+READ_MODEL = os.getenv("READ_MODEL", "claude-haiku-4-5")
+MODEL = os.getenv("MODEL", MODEL)

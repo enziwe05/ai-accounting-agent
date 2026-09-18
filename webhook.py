@@ -15,8 +15,6 @@ Run it:
 Then expose it publicly for Meta with:  ngrok http 8000
 """
 
-import hashlib
-import hmac
 import json
 import os
 from pathlib import Path
@@ -34,11 +32,22 @@ from categorize import categorize_transaction
 from cfo_agent import ask_cfo
 from db import get_connection
 from read_receipt import read_receipt
+from security import (
+    allow_rate, cap_message, is_authorized, print_security_audit,
+    sanitize_untrusted, signature_ok,
+)
 from store import save_receipt
 from whatsapp import download_media, send_document, send_text
 
 VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "")
-APP_SECRET = os.getenv("WHATSAPP_APP_SECRET", "")  # optional; enables signature check
+APP_SECRET = os.getenv("WHATSAPP_APP_SECRET", "")  # when set, signatures are verified
+
+# Print (to the logs) whether we're running locked-down or wide-open, so the
+# operator can see at a glance if OWNER_NUMBERS / WHATSAPP_APP_SECRET are set.
+print_security_audit()
+
+# Sent (as static text, no AI call) when an approved owner is messaging too fast.
+RATE_LIMIT_NOTICE = "You're sending messages very quickly — give me a moment to catch up."
 
 UPLOADS = Path("uploads")
 UPLOADS.mkdir(exist_ok=True)
@@ -133,11 +142,11 @@ def verify(request: Request):
 async def receive(request: Request, background: BackgroundTasks):
     raw = await request.body()
 
-    # If an app secret is configured, verify Meta's signature before trusting it.
+    # If an app secret is configured, verify Meta's signature before trusting the
+    # request at all — this rejects anyone POSTing forged messages to the endpoint.
     if APP_SECRET:
         signature = request.headers.get("X-Hub-Signature-256", "")
-        expected = "sha256=" + hmac.new(APP_SECRET.encode(), raw, hashlib.sha256).hexdigest()
-        if not hmac.compare_digest(signature, expected):
+        if not signature_ok(APP_SECRET, signature, raw):
             return Response(content="bad signature", status_code=403)
 
     body = json.loads(raw or b"{}")
@@ -166,6 +175,20 @@ def _handle_message(msg: dict) -> None:
     sender = msg["from"]
     mtype = msg.get("type")
 
+    # 1) Access control: only approved owner numbers may use the bot. An unknown
+    #    sender is logged (so the owner can see the attempt) and then ignored —
+    #    no reply, no AI call, nothing revealed.
+    if not is_authorized(sender):
+        log_message(sender, "in", f"[blocked: unauthorized sender, {mtype}]", "system")
+        return
+
+    # 2) Rate limit: stop one number flooding us with (paid) AI work. The sender
+    #    is already an approved owner here, so a brief static notice is safe.
+    if not allow_rate(sender):
+        log_message(sender, "in", "[rate limited]", "system")
+        reply(sender, RATE_LIMIT_NOTICE)
+        return
+
     if mtype == "text":
         body = msg["text"]["body"]
         log_message(sender, "in", body, "text")
@@ -183,6 +206,7 @@ def _handle_message(msg: dict) -> None:
 
 
 def _handle_text(sender: str, text: str) -> None:
+    text = cap_message(text)  # bound one huge message so it can't blow up token cost
     history = CONVERSATIONS.setdefault(sender, [])
 
     # Greet + introduce when the message is just a greeting (so a real first
@@ -225,7 +249,11 @@ def _handle_image(sender: str, media_id: str) -> None:
     finally:
         conn.close()
 
-    lines = [f"Filed: *{receipt.vendor}* — {receipt.currency} {receipt.total_amount:.2f}"]
+    # The vendor comes off an attacker-controllable photo, so neutralise it
+    # (flatten to one short line) before it goes anywhere near the AI or a reply.
+    vendor = sanitize_untrusted(receipt.vendor) or "(unnamed)"
+
+    lines = [f"Filed: *{vendor}* — {receipt.currency} {receipt.total_amount:.2f}"]
     if receipt.date:
         lines.append(f"Date: {receipt.date}")
     if result["outcome"] == "sorted":
@@ -235,9 +263,10 @@ def _handle_image(sender: str, media_id: str) -> None:
     message = "\n".join(lines)
 
     # Remember what we just filed so the owner's follow-up ("what was that?",
-    # "what category should it be?") has context.
+    # "what category should it be?") has context. The vendor is sanitised above.
     history = CONVERSATIONS.setdefault(sender, [])
-    history.append({"role": "user", "content": f"[I just sent a photo of a receipt from {receipt.vendor}.]"})
+    history.append({"role": "user", "content": f"[The owner sent a photo of a receipt; "
+                    f"the shop name read as: {vendor}.]"})
     history.append({"role": "assistant", "content": message})
     _trim(history)
 

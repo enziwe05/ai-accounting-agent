@@ -51,7 +51,7 @@ CREATE TABLE IF NOT EXISTS category_rules (
 CREATE TABLE IF NOT EXISTS documents (
   id             INT AUTO_INCREMENT PRIMARY KEY,
   source_key     VARCHAR(500) NOT NULL,          -- file path / storage key (#4)
-  doc_type       ENUM('receipt','invoice','statement') NOT NULL DEFAULT 'receipt',
+  doc_type       ENUM('receipt','invoice','statement','cash') NOT NULL DEFAULT 'receipt',
   vendor         VARCHAR(255) NULL,
   doc_date       DATE NULL,                       -- NULL when unreadable (never guessed)
   total_amount   DECIMAL(12,2) NULL,
@@ -78,7 +78,7 @@ CREATE TABLE IF NOT EXISTS transactions (
   vat_amount   DECIMAL(12,2) NULL,
   currency     CHAR(3) NOT NULL DEFAULT 'ZAR',
   category_id  INT NULL,                          -- set by a rule, or after review
-  source       ENUM('photo','invoice','statement','schedule') NOT NULL DEFAULT 'photo',
+  source       ENUM('photo','invoice','statement','schedule','cash') NOT NULL DEFAULT 'photo',
   status       ENUM('sorted','needs_review','no_document') NOT NULL DEFAULT 'needs_review',
   created_at   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT fk_txn_document FOREIGN KEY (document_id) REFERENCES documents(id),
@@ -154,4 +154,54 @@ CREATE TABLE IF NOT EXISTS message_log (
   created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   KEY idx_ml_from (wa_from),
   KEY idx_ml_time (created_at)
+) ENGINE=InnoDB;
+
+
+-- =============================================================================
+-- Accounts Receivable — money customers owe the business.
+--
+-- The owner invoices a customer; that invoice is a *receivable* (a promise of
+-- money), NOT income yet. Income is recognised the day the customer actually
+-- pays (cash basis — the simplest, most honest view for a small business). So
+-- an unpaid invoice lives here only; when it is marked paid, a Sales income
+-- transaction is written into the books so it shows up in the P&L (like any
+-- other money movement, it keeps a link back to its source — the invoice, #4).
+-- =============================================================================
+
+-- 9) customers — the people/companies the business invoices --------------------
+CREATE TABLE IF NOT EXISTS customers (
+  id          INT AUTO_INCREMENT PRIMARY KEY,
+  name        VARCHAR(200) NOT NULL,
+  email       VARCHAR(200) NULL,
+  phone       VARCHAR(40) NULL,
+  created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE KEY uq_customer_name (name)
+) ENGINE=InnoDB;
+
+
+-- 10) invoices — one bill sent to a customer -----------------------------------
+--     line_items keeps the itemised work/goods as JSON (same idea as a receipt's
+--     raw_extraction). income_transaction_id links to the transaction created
+--     when the invoice is paid, so paid income traces back to its invoice (#4).
+CREATE TABLE IF NOT EXISTS invoices (
+  id                     INT AUTO_INCREMENT PRIMARY KEY,
+  invoice_number         VARCHAR(40) NOT NULL,           -- e.g. INV-0007 (human-facing)
+  customer_id            INT NOT NULL,
+  issue_date             DATE NOT NULL,
+  due_date               DATE NULL,                       -- when payment is expected
+  subtotal_amount        DECIMAL(12,2) NOT NULL,          -- before VAT
+  vat_amount             DECIMAL(12,2) NOT NULL DEFAULT 0,
+  total_amount           DECIMAL(12,2) NOT NULL,          -- subtotal + VAT (what's owed)
+  currency               CHAR(3) NOT NULL DEFAULT 'ZAR',
+  line_items             JSON NULL,                        -- [{description, quantity, unit_price, amount}]
+  notes                  VARCHAR(500) NULL,
+  status                 ENUM('draft','sent','paid','cancelled') NOT NULL DEFAULT 'sent',
+  paid_date              DATE NULL,
+  income_transaction_id  INT NULL,                         -- set when marked paid
+  created_at             DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT fk_invoice_customer FOREIGN KEY (customer_id) REFERENCES customers(id),
+  CONSTRAINT fk_invoice_income_txn FOREIGN KEY (income_transaction_id) REFERENCES transactions(id),
+  UNIQUE KEY uq_invoice_number (invoice_number),
+  KEY idx_invoice_status (status),
+  KEY idx_invoice_due (due_date)
 ) ENGINE=InnoDB;

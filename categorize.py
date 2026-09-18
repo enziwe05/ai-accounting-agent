@@ -118,6 +118,26 @@ def load_category_map(cur) -> dict:
     return {row["name"]: row["id"] for row in cur.fetchall()}
 
 
+def resolve_category(cur, name: str) -> tuple[dict | None, list[dict]]:
+    """Match a spoken category name to a real category row.
+
+    Returns (chosen, all_categories). `chosen` is the row (dict with id/name) for
+    an exact name match, else a single unambiguous 'contains' match, else None
+    (unknown or ambiguous). The caller decides what to do when it's None — this
+    is shared by every place a human names a category, so the matching is
+    identical everywhere.
+    """
+    cur.execute("SELECT id, name FROM categories")
+    cats = cur.fetchall()
+    want = (name or "").strip().lower()
+    if not want:
+        return None, cats
+    exact = [c for c in cats if c["name"].lower() == want]
+    partial = [c for c in cats if want in c["name"].lower()]
+    chosen = exact[0] if exact else (partial[0] if len(partial) == 1 else None)
+    return chosen, cats
+
+
 def categorize_transaction(cur, txn_id: int) -> dict:
     """Categorize one transaction. Returns a small dict describing what happened."""
     cur.execute(

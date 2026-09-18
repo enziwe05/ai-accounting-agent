@@ -25,7 +25,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field
 
-from llm import MODEL, client  # the one shared Anthropic client (#6)
+from llm import READ_MODEL, client  # the one shared Anthropic client (#6)
 
 # South African product: home currency is the Rand. Detected currency on the
 # document always wins; this is only the fallback when a slip doesn't show one.
@@ -137,7 +137,7 @@ def read_receipt(path: Path) -> Receipt:
     source_block = build_source_block(path)
 
     response = client.messages.parse(
-        model=MODEL,
+        model=READ_MODEL,
         max_tokens=2000,
         system=SYSTEM_PROMPT,
         messages=[

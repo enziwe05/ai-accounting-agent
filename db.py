@@ -12,6 +12,7 @@ the real values still come from .env.
 
 import os
 import sys
+from contextlib import contextmanager
 
 import pymysql
 
@@ -53,3 +54,22 @@ def get_connection(include_database: bool = True) -> pymysql.connections.Connect
     'bookkeeper' database exists so it can create it.
     """
     return pymysql.connect(**_settings(include_database=include_database))
+
+
+@contextmanager
+def db_cursor():
+    """Open a connection, hand back a cursor, and always close the connection.
+
+    Saves repeating the `conn = get_connection(); try: ... finally: conn.close()`
+    dance. Autocommit is on, so writes are saved as they run.
+
+        with db_cursor() as cur:
+            cur.execute(...)
+            rows = cur.fetchall()
+    """
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            yield cur
+    finally:
+        conn.close()
