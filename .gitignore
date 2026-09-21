@@ -1,6 +1,14 @@
 # Secrets — never commit
 .env
 
+# Per-company deployment secrets: keep the .example templates, ignore the real ones
+env/*.env
+!env/*.env.example
+
+# Server runtime data + database backups (never commit financial data)
+data/
+backups/
+
 # Python
 __pycache__/
 *.pyc

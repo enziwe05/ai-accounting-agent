@@ -1,0 +1,66 @@
+# One server runs everything:
+#   - db     : a single MySQL server (each company gets its OWN database on it)
+#   - caddy  : the public doorway — free automatic HTTPS + routes each company's
+#              web address to its own app
+#   - m26    : the first company's app instance
+#
+# To add companies 2 and 3 later, copy the "m26" block, rename it, point it at a
+# new env file, and add a matching line in the Caddyfile (see DEPLOY.md).
+
+services:
+  db:
+    image: mysql:8.4
+    restart: unless-stopped
+    env_file: ./env/db.env
+    volumes:
+      - db_data:/var/lib/mysql
+    # NOT published to the internet — only the app containers reach it privately.
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-p$$MYSQL_ROOT_PASSWORD"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  m26:
+    build: .
+    restart: unless-stopped
+    env_file: ./env/m26.env
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      # This company's received photos and generated invoice/report files,
+      # kept on the server so they survive restarts.
+      - ./data/m26/uploads:/app/uploads
+      - ./data/m26/reports:/app/reports
+    # No ports here — Caddy reaches it on port 8000 over the private network.
+
+  # ---- Company 2 (example — uncomment and edit when you onboard them) ----
+  # companyb:
+  #   build: .
+  #   restart: unless-stopped
+  #   env_file: ./env/companyb.env
+  #   depends_on:
+  #     db:
+  #       condition: service_healthy
+  #   volumes:
+  #     - ./data/companyb/uploads:/app/uploads
+  #     - ./data/companyb/reports:/app/reports
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - m26
+
+volumes:
+  db_data:
+  caddy_data:
+  caddy_config:

@@ -1,0 +1,11 @@
+# The app is developed on Windows but runs on Linux (the server + Docker).
+# Force LF line endings in the repo so shell scripts, the Dockerfile and config
+# files never break with Windows CRLF endings on the server.
+* text=auto eol=lf
+
+*.sh   text eol=lf
+*.py   text eol=lf
+Dockerfile   text eol=lf
+Caddyfile    text eol=lf
+*.yml  text eol=lf
+*.env.example text eol=lf

@@ -1,0 +1,31 @@
+# Keep the image small and secrets/junk out of it.
+.venv/
+venv/
+.git/
+.gitignore
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Secrets and per-company config live in env files mounted at runtime, never baked
+# into the image.
+.env
+env/
+
+# Runtime data and generated files (mounted as volumes on the server instead).
+uploads/
+reports/
+data/
+backups/
+
+# Local test media / financial docs.
+*.jpg
+*.jpeg
+*.png
+*.webp
+*.pdf
+*.xlsx
+
+# Docs
+DEPLOY.md
+README.md

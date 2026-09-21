@@ -1,0 +1,22 @@
+# Caddy gives each company a secure (HTTPS) web address and forwards it to that
+# company's app. Caddy fetches and renews the HTTPS certificate automatically —
+# you don't manage any certificates yourself.
+#
+# Requirements for the certificate to be issued:
+#   1. The domain below has a DNS "A record" pointing at this server's IP.
+#   2. Ports 80 and 443 are open on the server (the firewall step in DEPLOY.md).
+
+{
+	# Let's Encrypt uses this email for expiry notices. Put a real address.
+	email admin@m26technologies.co.sz
+}
+
+# ---- Company 1: M26 ----
+books.m26technologies.co.sz {
+	reverse_proxy m26:8000
+}
+
+# ---- Company 2 (example — uncomment when you onboard them) ----
+# books.companyb.co.za {
+# 	reverse_proxy companyb:8000
+# }
