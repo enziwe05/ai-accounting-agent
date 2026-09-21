@@ -13,9 +13,9 @@
 -- Safe to run more than once (IF NOT EXISTS everywhere).
 -- =============================================================================
 
-CREATE DATABASE IF NOT EXISTS bookkeeper
-  CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
-USE bookkeeper;
+-- The database itself is created and selected by init_db.py, using the DB_NAME
+-- from the environment (default 'bookkeeper'). This lets each company run on its
+-- own separate database on the same MySQL server (bookkeeper_a, bookkeeper_b, ...).
 
 
 -- 1) categories — the chart of categories (Fuel, Rent, Sales, ...) ------------
@@ -151,9 +151,13 @@ CREATE TABLE IF NOT EXISTS message_log (
   direction   ENUM('in','out') NOT NULL,               -- 'in' = from user, 'out' = from bot
   kind        ENUM('text','image','document','system') NOT NULL DEFAULT 'text',
   body        TEXT NULL,
+  wa_msg_id   VARCHAR(64) NULL,                         -- WhatsApp's own message id (wamid),
+                                                        --   so we can find a message the owner
+                                                        --   later quotes/replies to.
   created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   KEY idx_ml_from (wa_from),
-  KEY idx_ml_time (created_at)
+  KEY idx_ml_time (created_at),
+  KEY idx_ml_msgid (wa_msg_id)
 ) ENGINE=InnoDB;
 
 

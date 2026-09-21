@@ -30,7 +30,7 @@ except ImportError:
 
 from categorize import categorize_transaction
 from cfo_agent import ask_cfo
-from db import get_connection
+from db import db_cursor, get_connection
 from read_receipt import read_receipt
 from security import (
     allow_rate, cap_message, is_authorized, print_security_audit,
@@ -84,30 +84,35 @@ _GREETINGS = {"hi", "hie", "hey", "hello", "hallo", "yebo", "start", "help",
               "menu", "hi there", "good morning", "good afternoon", "good evening"}
 
 
-def log_message(wa_from: str, direction: str, body: str, kind: str = "text") -> None:
+def log_message(wa_from: str, direction: str, body: str, kind: str = "text",
+                wa_msg_id: str | None = None) -> None:
     """Save one message (in or out) so the owner can read the conversations later.
 
-    Logging must never break message handling, so any failure here is swallowed.
+    wa_msg_id is WhatsApp's own id for the message, kept so that a message the
+    owner later quotes/replies to can be looked up. Logging must never break
+    message handling, so any failure here is swallowed.
     """
     try:
-        conn = get_connection()
-        try:
-            with conn.cursor() as cur:
-                cur.execute(
-                    "INSERT INTO message_log (wa_from, direction, kind, body) "
-                    "VALUES (%s, %s, %s, %s)",
-                    (wa_from, direction, kind, body),
-                )
-        finally:
-            conn.close()
+        with db_cursor() as cur:
+            cur.execute(
+                "INSERT INTO message_log (wa_from, direction, kind, body, wa_msg_id) "
+                "VALUES (%s, %s, %s, %s, %s)",
+                (wa_from, direction, kind, body, wa_msg_id),
+            )
     except Exception:
         pass
 
 
 def reply(sender: str, text: str, kind: str = "text") -> None:
-    """Log the outgoing reply, then send it."""
-    log_message(sender, "out", text, kind)
-    send_text(sender, text)
+    """Send the reply, then log it (with the id WhatsApp assigns) so the owner
+    can later swipe-to-reply to it and we can look it up."""
+    resp = send_text(sender, text)
+    wamid = None
+    try:
+        wamid = resp["messages"][0]["id"]
+    except (KeyError, IndexError, TypeError):
+        pass
+    log_message(sender, "out", text, kind, wa_msg_id=wamid)
 
 
 def _trim(history: list) -> None:
@@ -189,23 +194,51 @@ def _handle_message(msg: dict) -> None:
         reply(sender, RATE_LIMIT_NOTICE)
         return
 
+    wamid = msg.get("id")
     if mtype == "text":
         body = msg["text"]["body"]
-        log_message(sender, "in", body, "text")
-        _handle_text(sender, body)
+        log_message(sender, "in", body, "text", wa_msg_id=wamid)
+        # If the owner swiped-to-reply to an earlier message, fetch that message
+        # so the agent knows what they're referring to.
+        quoted = _quoted_message(msg)
+        _handle_text(sender, body, quoted)
     elif mtype == "image":
-        log_message(sender, "in", "[receipt photo]", "image")
+        log_message(sender, "in", "[receipt photo]", "image", wa_msg_id=wamid)
         _handle_image(sender, msg["image"]["id"])
     elif mtype == "document" and "document" in msg:
-        log_message(sender, "in", "[document]", "document")
+        log_message(sender, "in", "[document]", "document", wa_msg_id=wamid)
         _handle_image(sender, msg["document"]["id"])  # e.g. a PDF invoice
     else:
-        log_message(sender, "in", f"[{mtype} message]", "system")
+        log_message(sender, "in", f"[{mtype} message]", "system", wa_msg_id=wamid)
         reply(sender, "Send me a photo of a receipt to file it, or ask a "
                       "question about your books.")
 
 
-def _handle_text(sender: str, text: str) -> None:
+def _quoted_message(msg: dict) -> dict | None:
+    """If this message is a reply to an earlier one, look that earlier message up.
+
+    WhatsApp puts a `context` with the quoted message's id on a swipe-to-reply.
+    We find that id in message_log (both the bot's and the owner's past messages
+    are recorded) and return its direction + body, or None if we can't find it
+    (e.g. it predates message-id logging).
+    """
+    ctx = msg.get("context") or {}
+    quoted_id = ctx.get("id")
+    if not quoted_id:
+        return None
+    try:
+        with db_cursor() as cur:
+            cur.execute(
+                "SELECT direction, kind, body FROM message_log "
+                "WHERE wa_msg_id = %s ORDER BY id DESC LIMIT 1",
+                (quoted_id,),
+            )
+            return cur.fetchone()
+    except Exception:
+        return None
+
+
+def _handle_text(sender: str, text: str, quoted: dict | None = None) -> None:
     text = cap_message(text)  # bound one huge message so it can't blow up token cost
     history = CONVERSATIONS.setdefault(sender, [])
 
@@ -218,8 +251,20 @@ def _handle_text(sender: str, text: str) -> None:
         reply(sender, WELCOME)
         return
 
+    # If the owner replied to an earlier message, give the agent that context so
+    # it knows what "this" / "it" refers to — even if the message is days old and
+    # long gone from the rolling memory. The quoted text is treated as data (it's
+    # sanitised and clearly labelled), per the agent's security rules.
+    question = text
+    if quoted and quoted.get("body"):
+        who = "You (the assistant) had said" if quoted["direction"] == "out" \
+            else "The owner had earlier said"
+        quoted_text = sanitize_untrusted(quoted["body"], max_len=600)
+        question = (f"[The owner is replying to an earlier message. {who}: "
+                    f"\"{quoted_text}\"]\n\nTheir reply: {text}")
+
     files: list[str] = []
-    answer = ask_cfo(text, verbose=False, system_suffix=WHATSAPP_STYLE,
+    answer = ask_cfo(question, verbose=False, system_suffix=WHATSAPP_STYLE,
                      history=history, files_out=files)
     _trim(history)
     reply(sender, answer or "I didn't catch that — try asking again.")
