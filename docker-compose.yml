@@ -10,6 +10,15 @@
 services:
   db:
     image: mysql:8.4
+    # Keep MySQL's memory footprint small so the whole stack fits on a tiny
+    # (1GB) server. Turning off performance_schema and shrinking the buffer pool
+    # frees a few hundred MB for the app + Caddy. Slightly less caching, but for a
+    # low-traffic bookkeeping bot the difference is unnoticeable. Data is untouched.
+    command: >-
+      --performance-schema=OFF
+      --innodb-buffer-pool-size=64M
+      --innodb-buffer-pool-chunk-size=32M
+      --max-connections=50
     restart: unless-stopped
     env_file: ./env/db.env
     volumes:
