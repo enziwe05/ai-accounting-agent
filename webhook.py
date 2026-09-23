@@ -132,6 +132,24 @@ def _trim(history: list) -> None:
 app = FastAPI()
 
 
+@app.get("/health")
+def health():
+    """Health check for uptime monitoring (e.g. UptimeRobot).
+
+    Returns 200 with {"status":"ok"} only if the app is running AND the database
+    is reachable — so a single check confirms the whole bot is alive. Returns 503
+    if the database can't be reached. Reveals nothing sensitive.
+    """
+    try:
+        with db_cursor() as cur:
+            cur.execute("SELECT 1")
+            cur.fetchone()
+        return {"status": "ok"}
+    except Exception:
+        return Response(content='{"status":"db_unreachable"}',
+                        media_type="application/json", status_code=503)
+
+
 @app.get("/webhook")
 def verify(request: Request):
     """Meta's verification handshake when you register the webhook URL."""
