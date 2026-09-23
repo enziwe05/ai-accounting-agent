@@ -132,9 +132,12 @@ def _trim(history: list) -> None:
 app = FastAPI()
 
 
-@app.get("/health")
+@app.api_route("/health", methods=["GET", "HEAD"])
 def health():
     """Health check for uptime monitoring (e.g. UptimeRobot).
+
+    Answers both GET and HEAD — many uptime monitors send a lightweight HEAD
+    request, which a plain GET-only route would reject with 405.
 
     Returns 200 with {"status":"ok"} only if the app is running AND the database
     is reachable — so a single check confirms the whole bot is alive. Returns 503
