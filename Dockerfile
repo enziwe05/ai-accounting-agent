@@ -17,6 +17,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Then the application code.
 COPY . .
 
-# On start: make sure THIS company's database + tables exist (safe to re-run),
-# then serve the webhook. Caddy reaches this on port 8000 over the private network.
-CMD ["sh", "-c", "python init_db.py && uvicorn webhook:app --host 0.0.0.0 --port 8000"]
+# On start: make sure THIS company's database + tables exist, then load the
+# starter categories + rules (both steps are safe to re-run — they skip anything
+# that already exists), then serve the webhook. Without the seed step a brand-new
+# company has zero categories, so the bot can't file anything until it's run.
+# Caddy reaches this on port 8000 over the private network.
+CMD ["sh", "-c", "python init_db.py && python seed_db.py && uvicorn webhook:app --host 0.0.0.0 --port 8000"]

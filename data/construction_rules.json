@@ -1,0 +1,44 @@
+[
+  "NOTE: Construction / trades industry pack. Layered on top of default_rules.json",
+  "when SEED_PROFILE=construction. Includes the specific suppliers M26 uses plus",
+  "generic keyword rules. Matching is case-insensitive; add your own suppliers here.",
+
+  { "match_field": "vendor", "match_type": "contains", "pattern": "Goldwagen",       "category": "Motor Vehicle Repairs", "priority": 10, "notes": "Auto parts supplier" },
+  { "match_field": "vendor", "match_type": "contains", "pattern": "Smart Panel",     "category": "Motor Vehicle Repairs", "priority": 10, "notes": "Panel beater / smash repairs" },
+  { "match_field": "vendor", "match_type": "contains", "pattern": "Mitsubishi",      "category": "Motor Vehicle Repairs", "priority": 12, "notes": "Dealership service / parts" },
+  { "match_field": "vendor", "match_type": "contains", "pattern": "CMH",             "category": "Motor Vehicle Repairs", "priority": 12, "notes": "Combined Motor Holdings dealership" },
+  { "match_field": "vendor", "match_type": "contains", "pattern": "Panelbeaters",    "category": "Motor Vehicle Repairs", "priority": 15, "notes": "Panel beater" },
+  { "match_field": "vendor", "match_type": "contains", "pattern": "Tyres",           "category": "Motor Vehicle Repairs", "priority": 20, "notes": "Tyre fitment" },
+  { "match_field": "vendor", "match_type": "contains", "pattern": "Midas",           "category": "Motor Vehicle Repairs", "priority": 15, "notes": "Auto parts" },
+
+  { "match_field": "vendor", "match_type": "contains", "pattern": "Key Electric",    "category": "Electrical",            "priority": 10, "notes": "Electrical wholesaler" },
+  { "match_field": "vendor", "match_type": "contains", "pattern": "Electric",        "category": "Electrical",            "priority": 30, "notes": "Electrical supplier — confirm" },
+  { "match_field": "vendor", "match_type": "contains", "pattern": "Voltex",          "category": "Electrical",            "priority": 15, "notes": "Electrical wholesaler" },
+  { "match_field": "vendor", "match_type": "contains", "pattern": "ARB",             "category": "Electrical",            "priority": 15, "notes": "Electrical wholesaler" },
+
+  { "match_field": "vendor", "match_type": "contains", "pattern": "Maizey",          "category": "Materials & Supplies",  "priority": 10, "notes": "Materials / plastics supplier" },
+  { "match_field": "vendor", "match_type": "contains", "pattern": "Buco",            "category": "Materials & Supplies",  "priority": 15, "notes": "Building materials" },
+  { "match_field": "vendor", "match_type": "contains", "pattern": "Build it",        "category": "Materials & Supplies",  "priority": 15, "notes": "Building materials" },
+  { "match_field": "vendor", "match_type": "contains", "pattern": "Cashbuild",       "category": "Materials & Supplies",  "priority": 15, "notes": "Building materials" },
+  { "match_field": "vendor", "match_type": "contains", "pattern": "Builders Warehouse", "category": "Materials & Supplies", "priority": 15, "notes": "Building materials" },
+  { "match_field": "vendor", "match_type": "contains", "pattern": "Chamberlain",     "category": "Materials & Supplies",  "priority": 15, "notes": "Building materials / hardware" },
+
+  { "match_field": "vendor", "match_type": "contains", "pattern": "Plumb",           "category": "Plumbing",              "priority": 20, "notes": "Plumbing supplier" },
+
+  { "match_field": "vendor", "match_type": "contains", "pattern": "Eswatini Electricity", "category": "Utilities",        "priority": 8,  "notes": "Eswatini Electricity Company" },
+  { "match_field": "vendor", "match_type": "contains", "pattern": "EEC",             "category": "Utilities",             "priority": 12, "notes": "Eswatini Electricity Company" },
+
+  { "match_field": "description", "match_type": "contains", "pattern": "cement",     "category": "Materials & Supplies",  "priority": 40, "notes": "Building material" },
+  { "match_field": "description", "match_type": "contains", "pattern": "timber",     "category": "Materials & Supplies",  "priority": 40, "notes": "Building material" },
+  { "match_field": "description", "match_type": "contains", "pattern": "brick",      "category": "Materials & Supplies",  "priority": 40, "notes": "Building material" },
+  { "match_field": "description", "match_type": "contains", "pattern": "sand",       "category": "Materials & Supplies",  "priority": 40, "notes": "Building material" },
+  { "match_field": "description", "match_type": "contains", "pattern": "paint",      "category": "Materials & Supplies",  "priority": 45, "notes": "Building material" },
+
+  { "match_field": "description", "match_type": "contains", "pattern": "hire",       "category": "Equipment Hire",        "priority": 35, "notes": "Plant / equipment hire" },
+  { "match_field": "description", "match_type": "contains", "pattern": "TLB",         "category": "Equipment Hire",        "priority": 30, "notes": "TLB / plant" },
+
+  { "match_field": "description", "match_type": "contains", "pattern": "helmet",     "category": "Safety & PPE",          "priority": 30, "notes": "Safety gear" },
+  { "match_field": "description", "match_type": "contains", "pattern": "boots",      "category": "Safety & PPE",          "priority": 35, "notes": "Safety gear" },
+  { "match_field": "description", "match_type": "contains", "pattern": "gloves",     "category": "Safety & PPE",          "priority": 35, "notes": "Safety gear" },
+  { "match_field": "description", "match_type": "contains", "pattern": "PPE",        "category": "Safety & PPE",          "priority": 25, "notes": "Personal protective equipment" }
+]

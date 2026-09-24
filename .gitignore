@@ -5,9 +5,13 @@
 env/*.env
 !env/*.env.example
 
-# Server runtime data + database backups (never commit financial data)
-data/
+# Server runtime data + database backups (never commit financial data).
+# Ignore everything under data/ (uploads, reports, per-company folders)...
+data/*
 backups/
+# ...but DO track the seed packs (category/rule lists — no financial data in them).
+!data/*_categories.json
+!data/*_rules.json
 
 # Python
 __pycache__/

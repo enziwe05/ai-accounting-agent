@@ -1,0 +1,11 @@
+[
+  { "name": "Materials & Supplies", "kind": "expense" },
+  { "name": "Motor Vehicle Repairs", "kind": "expense" },
+  { "name": "Electrical", "kind": "expense" },
+  { "name": "Plumbing", "kind": "expense" },
+  { "name": "Tools & Equipment", "kind": "expense" },
+  { "name": "Equipment Hire", "kind": "expense" },
+  { "name": "Subcontractors", "kind": "expense" },
+  { "name": "Site Costs", "kind": "expense" },
+  { "name": "Safety & PPE", "kind": "expense" }
+]
