@@ -27,9 +27,10 @@ from pydantic import BaseModel, Field
 
 from llm import READ_MODEL, client  # the one shared Anthropic client (#6)
 
-# South African product: home currency is the Rand. Detected currency on the
-# document always wins; this is only the fallback when a slip doesn't show one.
-DEFAULT_CURRENCY = os.getenv("DEFAULT_CURRENCY", "ZAR")
+# Currency is configured per company (see currency.py). The currency detected on
+# the document always wins; DEFAULT_CURRENCY is only the fallback when a slip
+# doesn't show one. M26 (Eswatini) uses SZL + ZAR; a SA client uses ZAR only.
+from currency import DEFAULT_CURRENCY, reader_guidance
 
 
 # --- The shape of the data we want back -------------------------------------
@@ -69,9 +70,9 @@ class Receipt(BaseModel):
     )
     currency: str = Field(
         default=DEFAULT_CURRENCY,
-        description="ISO currency code. Almost always ZAR (South African Rand, 'R'). "
-        "Read the symbol/code printed on the slip; only fall back to ZAR if none "
-        "is shown.",
+        description="ISO currency code of the amounts, read from the symbol/code "
+        "printed on the document (e.g. ZAR for Rand 'R', SZL for Emalangeni 'E'). "
+        "Only fall back to the business default if no currency is shown.",
     )
     # Not extracted by the model — we set this ourselves so every figure can be
     # traced back to the file it came from (non-negotiable #4).
@@ -79,9 +80,9 @@ class Receipt(BaseModel):
 
 
 SYSTEM_PROMPT = (
-    "You read photographed receipts, invoices and slips for a South African "
-    "small-business bookkeeping assistant. Amounts are in South African Rand (ZAR, "
-    "symbol 'R') and VAT is 15%. Extract only what is actually printed on the "
+    "You read photographed receipts, invoices and slips for a small-business "
+    "bookkeeping assistant. " + reader_guidance() + " VAT is 15%. "
+    "Extract only what is actually printed on the "
     "document. Do not guess or invent figures. If a value is unreadable, leave it "
     "empty (for text) or null (for numbers) rather than making something up. "
     "Amounts are the numeric totals only, without the currency symbol. "

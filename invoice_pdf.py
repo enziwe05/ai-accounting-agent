@@ -42,9 +42,12 @@ def _business() -> dict:
 
 
 def _money(currency: str, amount) -> str:
-    """Format money the South African way: R2 849.00 (thin space as thousands sep)."""
-    symbol = "R" if currency == "ZAR" else f"{currency} "
-    return f"{symbol}{amount:,.2f}".replace(",", " ")
+    """Format money the local way: R2 849.00, E500.00 (space as thousands sep)."""
+    from currency import symbol as _sym
+    sym = _sym(currency)
+    # Known symbols hug the number (R2 849.00); unknown codes get a space (XAF 500.00).
+    joiner = "" if sym and sym != currency else " "
+    return f"{sym}{joiner}{amount:,.2f}".replace(",", " ")
 
 
 def render_invoice_pdf(invoice: dict, out_path: str | Path) -> Path:

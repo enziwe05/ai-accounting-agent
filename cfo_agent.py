@@ -22,6 +22,7 @@ from pathlib import Path
 
 import invoices as ar  # accounts receivable (invoices)
 from categorize import categorize_transaction, resolve_category
+from currency import DEFAULT_CURRENCY, agent_guidance
 from db import get_connection
 from invoice_pdf import render_invoice_pdf
 from llm import MODEL, client
@@ -227,7 +228,7 @@ def tool_record_expense(amount, description, expense_date=None, category=None,
 
     when = expense_date or date.today().isoformat()
     vendor = (payee or description or "Cash payment")[:200]
-    currency = os.getenv("DEFAULT_CURRENCY", "ZAR")
+    currency = DEFAULT_CURRENCY
     note = json.dumps({"manual_cash_entry": True, "note": description,
                        "payee": payee}, ensure_ascii=False)
 
@@ -589,8 +590,8 @@ SYSTEM_PROMPT = (
     "You are a friendly bookkeeping helper for a South African small business owner. "
     "Talk like a helpful person, not an accountant: warm, encouraging, and in simple "
     "everyday English that anyone can understand. Keep answers short. Avoid jargon — if "
-    "you must use a bookkeeping word, explain it in a few plain words. Money is in South "
-    "African Rand; write it like 'R2 849.00'. Sound like a real, helpful person — warm "
+    "you must use a bookkeeping word, explain it in a few plain words. " + agent_guidance() +
+    " Sound like a real, helpful person — warm "
     "but not over-the-top. Go very easy on emoji: at most one, only when it genuinely "
     "fits, and usually none.\n\n"
     "Use the tools to look up real numbers — never guess. If someone asks what they "

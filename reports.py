@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
+from currency import DEFAULT_CURRENCY
 from db import get_connection
 
 
@@ -112,7 +113,7 @@ def build_report(period_start: Optional[str] = None,
     try:
         with conn.cursor() as cur:
             rows = _fetch_rows(cur, period_start, period_end)
-        return summarize(rows, "ZAR", period_start, period_end)
+        return summarize(rows, DEFAULT_CURRENCY, period_start, period_end)
     finally:
         conn.close()
 

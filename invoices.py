@@ -17,6 +17,7 @@ database, so they are easy to unit-test.
 import json
 from datetime import date, timedelta
 
+from currency import DEFAULT_CURRENCY
 from db import get_connection
 
 # South Africa: VAT is 15%. Only applied when the owner says the price includes
@@ -130,7 +131,7 @@ def create_invoice(customer_name: str, amount: float | None = None,
                    vat_inclusive: bool = False, due_in_days: int = 14,
                    issue_date: str | None = None, due_date: str | None = None,
                    email: str | None = None, phone: str | None = None,
-                   notes: str | None = None, currency: str = "ZAR") -> dict:
+                   notes: str | None = None, currency: str | None = None) -> dict:
     """Raise a new invoice for a customer. Returns the saved invoice as a dict.
 
     Give either an `amount` (the total to charge) or `line_items` — if only line
@@ -138,6 +139,7 @@ def create_invoice(customer_name: str, amount: float | None = None,
     whether 15% VAT is backed out of the total. Nothing touches the P&L here; an
     unpaid invoice is only a receivable until mark_invoice_paid is called.
     """
+    currency = (currency or DEFAULT_CURRENCY).upper()
     items = _clean_line_items(line_items)
     if amount is None:
         if not items:
