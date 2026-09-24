@@ -15,8 +15,12 @@ env/
 # Runtime data and generated files (mounted as volumes on the server instead).
 uploads/
 reports/
-data/
+data/*
 backups/
+# ...but DO bake in the seed packs (category/rule lists) so the app can seed
+# categories on first run. No financial data lives in these files.
+!data/*_categories.json
+!data/*_rules.json
 
 # Local test media / financial docs.
 *.jpg
