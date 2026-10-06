@@ -142,6 +142,39 @@ def outstanding_invoices(x_api_key: str = Header(...)):
     ]
 
 
+@router.get("/categories/spend")
+def category_spend(x_api_key: str = Header(...)):
+    _check_key(x_api_key)
+
+    today = date.today()
+    month_start = today.replace(day=1).isoformat()
+
+    with db_cursor() as cur:
+        cur.execute(
+            """
+            SELECT c.name AS category, SUM(t.amount) AS total
+            FROM transactions t
+            JOIN categories c ON c.id = t.category_id
+            WHERE c.kind = 'expense' AND t.txn_date >= %s
+            GROUP BY c.name
+            ORDER BY total DESC
+            LIMIT 10
+            """,
+            [month_start],
+        )
+        rows = cur.fetchall()
+
+    total = sum(float(r["total"]) for r in rows)
+    return [
+        {
+            "category": r["category"],
+            "amount": float(r["total"]),
+            "percent": round(float(r["total"]) / total * 100, 1) if total > 0 else 0,
+        }
+        for r in rows
+    ]
+
+
 @router.get("/pending")
 def pending_items(x_api_key: str = Header(...)):
     _check_key(x_api_key)
