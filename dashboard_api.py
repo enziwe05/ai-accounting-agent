@@ -265,6 +265,42 @@ def category_spend(x_api_key: str = Header(...)):
     ]
 
 
+@router.get("/summary/monthly")
+def monthly_summary(months: int = 6, x_api_key: str = Header(...)):
+    """Last N months of income vs expenses for trend charts."""
+    _check_key(x_api_key)
+    safe_months = min(max(months, 2), 24)
+
+    with db_cursor() as cur:
+        cur.execute(
+            """
+            SELECT
+                DATE_FORMAT(t.txn_date, '%%Y-%%m') AS month_key,
+                DATE_FORMAT(t.txn_date, '%%b %%Y')  AS month_label,
+                COALESCE(SUM(CASE WHEN c.kind='income'  THEN t.amount ELSE 0 END), 0) AS income,
+                COALESCE(SUM(CASE WHEN c.kind='expense' THEN t.amount ELSE 0 END), 0) AS expenses
+            FROM transactions t
+            LEFT JOIN categories c ON c.id = t.category_id
+            WHERE t.txn_date >= DATE_SUB(CURDATE(), INTERVAL %s MONTH)
+              AND t.txn_date IS NOT NULL
+            GROUP BY month_key, month_label
+            ORDER BY month_key ASC
+            """,
+            [safe_months],
+        )
+        rows = cur.fetchall()
+
+    return [
+        {
+            "month": r["month_key"],
+            "label": r["month_label"],
+            "income": float(r["income"]),
+            "expenses": float(r["expenses"]),
+        }
+        for r in rows
+    ]
+
+
 @router.get("/pending")
 def pending_items(x_api_key: str = Header(...)):
     _check_key(x_api_key)
