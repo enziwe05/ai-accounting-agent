@@ -78,21 +78,45 @@ def summary(x_api_key: str = Header(...)):
 
 
 @router.get("/transactions")
-def recent_transactions(limit: int = 10, x_api_key: str = Header(...)):
+def recent_transactions(
+    limit: int = 10,
+    status: str = "all",
+    search: str = "",
+    x_api_key: str = Header(...),
+):
     _check_key(x_api_key)
-    safe_limit = min(limit, 50)
+    safe_limit = min(limit, 100)
+
+    clauses: list[str] = []
+    params: list = []
+
+    if status == "pending":
+        clauses.append("t.status = 'pending'")
+    elif status == "sorted":
+        clauses.append("t.status = 'sorted'")
+
+    if search.strip():
+        clauses.append("(t.description LIKE %s OR c.name LIKE %s)")
+        s = f"%{search.strip()[:100]}%"
+        params.extend([s, s])
+
+    where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+    params.append(safe_limit)
 
     with db_cursor() as cur:
         cur.execute(
-            """
+            f"""
             SELECT t.id, t.txn_date, t.description, t.amount, t.status,
-                   c.name AS category, c.kind
+                   c.name AS category, c.kind,
+                   d.doc_type AS source
             FROM transactions t
             LEFT JOIN categories c ON c.id = t.category_id
+            LEFT JOIN documents d  ON d.id = t.document_id
+            {where}
             ORDER BY t.created_at DESC
             LIMIT %s
             """,
-            [safe_limit],
+            params,
         )
         rows = cur.fetchall()
 
@@ -105,9 +129,75 @@ def recent_transactions(limit: int = 10, x_api_key: str = Header(...)):
             "category": r["category"] or "Uncategorized",
             "kind": r["kind"] or "expense",
             "status": r["status"],
+            "source": r["source"] or "receipt",
         }
         for r in rows
     ]
+
+
+@router.get("/documents")
+def documents_list(x_api_key: str = Header(...)):
+    _check_key(x_api_key)
+
+    with db_cursor() as cur:
+        cur.execute(
+            """
+            SELECT id, doc_type, vendor, total_amount, doc_date,
+                   currency, vat_amount, paid_by_last4, uploaded_by, status, created_at
+            FROM documents
+            ORDER BY created_at DESC
+            LIMIT 100
+            """,
+        )
+        rows = cur.fetchall()
+
+    return [
+        {
+            "id": r["id"],
+            "type": r["doc_type"] or "receipt",
+            "vendor": r["vendor"] or "Unknown vendor",
+            "amount": float(r["total_amount"]) if r["total_amount"] else None,
+            "date": r["doc_date"].isoformat() if r["doc_date"] else None,
+            "currency": r["currency"],
+            "vat_amount": float(r["vat_amount"]) if r["vat_amount"] else None,
+            "paid_by_last4": r["paid_by_last4"],
+            "uploaded_by": r["uploaded_by"],
+            "status": r["status"],
+            "created_at": r["created_at"].isoformat() if r["created_at"] else None,
+        }
+        for r in rows
+    ]
+
+
+@router.post("/cfo/ask")
+async def cfo_ask(body: dict, x_api_key: str = Header(...)):
+    _check_key(x_api_key)
+    question = str(body.get("question", "")).strip()[:2000]
+    history = list(body.get("history", []))
+    if not question:
+        raise HTTPException(status_code=400, detail="question required")
+
+    try:
+        import asyncio
+        from cfo_agent import ask_cfo
+
+        def _call() -> str:
+            return ask_cfo(
+                question,
+                max_turns=8,
+                verbose=False,
+                system_suffix=(
+                    "Your reply will be displayed in a web chat interface. "
+                    "Use plain text only — no markdown, no ** or ## symbols. "
+                    "Be concise and conversational."
+                ),
+                history=history,
+            )
+
+        response = await asyncio.to_thread(_call)
+        return {"response": response, "history": history}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
 
 
 @router.get("/invoices/outstanding")
