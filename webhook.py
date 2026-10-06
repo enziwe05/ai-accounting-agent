@@ -131,6 +131,9 @@ def _trim(history: list) -> None:
 
 app = FastAPI()
 
+from dashboard_api import router as dashboard_router
+app.include_router(dashboard_router)
+
 
 @app.api_route("/health", methods=["GET", "HEAD"])
 def health():

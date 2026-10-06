@@ -1,0 +1,176 @@
+"""
+Dashboard read API — lightweight endpoints for the Incwadzi SaaS web app.
+
+Protected by a shared API key in the X-Api-Key request header. All responses
+are JSON. Read-only — no writes live here.
+"""
+
+import os
+from datetime import date
+
+from fastapi import APIRouter, Header, HTTPException
+
+from db import db_cursor
+
+router = APIRouter(prefix="/api")
+
+DASHBOARD_API_KEY = os.getenv("DASHBOARD_API_KEY", "")
+
+
+def _check_key(x_api_key: str) -> None:
+    if not DASHBOARD_API_KEY:
+        raise HTTPException(status_code=503, detail="Dashboard API not configured — set DASHBOARD_API_KEY")
+    if x_api_key != DASHBOARD_API_KEY:
+        raise HTTPException(status_code=401, detail="Invalid API key")
+
+
+@router.get("/summary")
+def summary(x_api_key: str = Header(...)):
+    _check_key(x_api_key)
+
+    today = date.today()
+    month_start = today.replace(day=1).isoformat()
+
+    with db_cursor() as cur:
+        cur.execute(
+            """
+            SELECT
+                COALESCE(SUM(CASE WHEN c.kind='income'  THEN t.amount ELSE 0 END), 0) AS income,
+                COALESCE(SUM(CASE WHEN c.kind='expense' THEN t.amount ELSE 0 END), 0) AS expenses
+            FROM transactions t
+            LEFT JOIN categories c ON c.id = t.category_id
+            WHERE t.txn_date >= %s
+            """,
+            [month_start],
+        )
+        row = cur.fetchone()
+        income = float(row["income"])
+        expenses = float(row["expenses"])
+
+        cur.execute(
+            "SELECT COUNT(*) AS cnt FROM transactions WHERE txn_date >= %s",
+            [month_start],
+        )
+        txn_count = cur.fetchone()["cnt"]
+
+        cur.execute("SELECT COUNT(*) AS cnt FROM review_queue WHERE status='pending'")
+        pending = cur.fetchone()["cnt"]
+
+        cur.execute(
+            """
+            SELECT COALESCE(SUM(total_amount), 0) AS total, COUNT(*) AS cnt
+            FROM invoices WHERE status IN ('sent','draft')
+            """
+        )
+        inv = cur.fetchone()
+
+    return {
+        "month": today.strftime("%B %Y"),
+        "income": income,
+        "expenses": expenses,
+        "net_profit": round(income - expenses, 2),
+        "transaction_count": txn_count,
+        "pending_review": pending,
+        "outstanding_invoices_amount": float(inv["total"]),
+        "outstanding_invoices_count": inv["cnt"],
+        "currency": "ZAR",
+    }
+
+
+@router.get("/transactions")
+def recent_transactions(limit: int = 10, x_api_key: str = Header(...)):
+    _check_key(x_api_key)
+    safe_limit = min(limit, 50)
+
+    with db_cursor() as cur:
+        cur.execute(
+            """
+            SELECT t.id, t.txn_date, t.description, t.amount, t.status,
+                   c.name AS category, c.kind
+            FROM transactions t
+            LEFT JOIN categories c ON c.id = t.category_id
+            ORDER BY t.created_at DESC
+            LIMIT %s
+            """,
+            [safe_limit],
+        )
+        rows = cur.fetchall()
+
+    return [
+        {
+            "id": r["id"],
+            "date": r["txn_date"].isoformat() if r["txn_date"] else None,
+            "description": r["description"] or "",
+            "amount": float(r["amount"]),
+            "category": r["category"] or "Uncategorized",
+            "kind": r["kind"] or "expense",
+            "status": r["status"],
+        }
+        for r in rows
+    ]
+
+
+@router.get("/invoices/outstanding")
+def outstanding_invoices(x_api_key: str = Header(...)):
+    _check_key(x_api_key)
+
+    with db_cursor() as cur:
+        cur.execute(
+            """
+            SELECT i.id, i.invoice_number, i.issue_date, i.due_date,
+                   i.total_amount, i.status, cu.name AS customer
+            FROM invoices i
+            JOIN customers cu ON cu.id = i.customer_id
+            WHERE i.status IN ('sent','draft')
+            ORDER BY i.due_date ASC
+            LIMIT 20
+            """,
+        )
+        rows = cur.fetchall()
+
+    return [
+        {
+            "id": r["id"],
+            "invoice_number": r["invoice_number"],
+            "customer": r["customer"],
+            "issue_date": r["issue_date"].isoformat() if r["issue_date"] else None,
+            "due_date": r["due_date"].isoformat() if r["due_date"] else None,
+            "amount": float(r["total_amount"]),
+            "status": r["status"],
+        }
+        for r in rows
+    ]
+
+
+@router.get("/pending")
+def pending_items(x_api_key: str = Header(...)):
+    _check_key(x_api_key)
+
+    with db_cursor() as cur:
+        cur.execute(
+            """
+            SELECT rq.id, rq.reason, rq.suggestion_note, rq.created_at,
+                   t.description AS txn_desc, t.amount AS txn_amount,
+                   c.name AS suggested_category
+            FROM review_queue rq
+            LEFT JOIN transactions t   ON t.id  = rq.transaction_id
+            LEFT JOIN categories c     ON c.id  = rq.suggested_category_id
+            WHERE rq.status = 'pending'
+            ORDER BY rq.created_at DESC
+            LIMIT 20
+            """,
+        )
+        rows = cur.fetchall()
+
+    return [
+        {
+            "id": r["id"],
+            "reason": r["reason"],
+            "note": r["suggestion_note"] or "",
+            "description": r["txn_desc"] or "",
+            "amount": float(r["txn_amount"]) if r["txn_amount"] else None,
+            "suggested_category": r["suggested_category"],
+            "created_at": r["created_at"].isoformat() if r["created_at"] else None,
+        }
+        for r in rows
+    ]
