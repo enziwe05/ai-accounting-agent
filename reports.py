@@ -89,12 +89,13 @@ def summarize(rows: list[dict], currency: str = "ZAR",
 
 # --- Database layer ----------------------------------------------------------
 
-def _fetch_rows(cur, period_start: Optional[str], period_end: Optional[str]) -> list[dict]:
+def _fetch_rows(cur, period_start: Optional[str], period_end: Optional[str],
+                company_id: int) -> list[dict]:
     sql = """SELECT t.amount, c.name AS category, c.kind
              FROM transactions t
              LEFT JOIN categories c ON c.id = t.category_id
-             WHERE 1=1"""
-    params: list = []
+             WHERE t.company_id = %s"""
+    params: list = [company_id]
     if period_start:
         sql += " AND t.txn_date >= %s"
         params.append(period_start)
@@ -107,12 +108,13 @@ def _fetch_rows(cur, period_start: Optional[str], period_end: Optional[str]) -> 
 
 
 def build_report(period_start: Optional[str] = None,
-                 period_end: Optional[str] = None) -> Report:
-    """Fetch rows from the DB and summarize them into a Report."""
+                 period_end: Optional[str] = None,
+                 company_id: int = 1) -> Report:
+    """Fetch rows from the DB and summarize them into a Report (one company)."""
     conn = get_connection()
     try:
         with conn.cursor() as cur:
-            rows = _fetch_rows(cur, period_start, period_end)
+            rows = _fetch_rows(cur, period_start, period_end, company_id)
         return summarize(rows, DEFAULT_CURRENCY, period_start, period_end)
     finally:
         conn.close()
@@ -183,12 +185,13 @@ def export_xlsx(report: Report, path: Path) -> Path:
 
 def generate_report(period_start: Optional[str] = None,
                     period_end: Optional[str] = None,
-                    out_path: Optional[Path] = None) -> tuple[Report, str]:
+                    out_path: Optional[Path] = None,
+                    company_id: int = 1) -> tuple[Report, str]:
     """The single entry point the dashboard button and the CFO agent both call.
 
     Returns (report, rendered_text). If out_path is given, also writes an .xlsx.
     """
-    report = build_report(period_start, period_end)
+    report = build_report(period_start, period_end, company_id)
     text = render_text(report)
     if out_path is not None:
         export_xlsx(report, Path(out_path))

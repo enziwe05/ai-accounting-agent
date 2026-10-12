@@ -11,10 +11,11 @@ from db import get_connection
 from read_receipt import Receipt
 
 
-def save_receipt(receipt: Receipt) -> tuple[int, int]:
-    """Insert a document + transaction for this receipt.
+def save_receipt(receipt: Receipt, company_id: int) -> tuple[int, int]:
+    """Insert a document + transaction for this receipt, owned by company_id.
 
-    Returns (document_id, transaction_id).
+    Every row is tagged with company_id so one business's receipts never land in
+    another's books (multi-tenancy). Returns (document_id, transaction_id).
     """
     # Empty date string -> NULL (we never store a guessed date).
     doc_date = receipt.date or None
@@ -24,10 +25,11 @@ def save_receipt(receipt: Receipt) -> tuple[int, int]:
         with conn.cursor() as cur:
             cur.execute(
                 """INSERT INTO documents
-                     (source_key, doc_type, vendor, doc_date, total_amount,
-                      vat_amount, currency, raw_extraction, status)
-                   VALUES (%s, 'receipt', %s, %s, %s, %s, %s, %s, 'read')""",
+                     (company_id, source_key, doc_type, vendor, doc_date,
+                      total_amount, vat_amount, currency, raw_extraction, status)
+                   VALUES (%s, %s, 'receipt', %s, %s, %s, %s, %s, %s, 'read')""",
                 (
+                    company_id,
                     receipt.source_file,
                     receipt.vendor,
                     doc_date,
@@ -41,10 +43,11 @@ def save_receipt(receipt: Receipt) -> tuple[int, int]:
 
             cur.execute(
                 """INSERT INTO transactions
-                     (document_id, txn_date, description, amount, vat_amount,
-                      currency, source, status)
-                   VALUES (%s, %s, %s, %s, %s, %s, 'photo', 'needs_review')""",
+                     (company_id, document_id, txn_date, description, amount,
+                      vat_amount, currency, source, status)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, 'photo', 'needs_review')""",
                 (
+                    company_id,
                     document_id,
                     doc_date,
                     receipt.vendor,  # description defaults to the vendor name

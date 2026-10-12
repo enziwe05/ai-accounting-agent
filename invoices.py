@@ -89,44 +89,50 @@ def _line_items_total(line_items: list[dict]) -> float:
 
 # --- Database layer ----------------------------------------------------------
 
-def _get_or_create_customer(cur, name: str, email=None, phone=None) -> int:
-    """Find a customer by name (case-insensitive), or create one. Returns its id."""
+def _get_or_create_customer(cur, name: str, company_id: int,
+                            email=None, phone=None) -> int:
+    """Find a customer by name (case-insensitive) within one company, or create
+    one. Returns its id."""
     name = (name or "").strip()
-    cur.execute("SELECT id FROM customers WHERE LOWER(name) = LOWER(%s)", (name,))
+    cur.execute(
+        "SELECT id FROM customers WHERE company_id = %s AND LOWER(name) = LOWER(%s)",
+        (company_id, name),
+    )
     row = cur.fetchone()
     if row:
         # Fill in contact details if we now have them and didn't before.
         if email or phone:
             cur.execute(
                 "UPDATE customers SET email = COALESCE(email, %s), "
-                "phone = COALESCE(phone, %s) WHERE id = %s",
-                (email, phone, row["id"]),
+                "phone = COALESCE(phone, %s) WHERE id = %s AND company_id = %s",
+                (email, phone, row["id"], company_id),
             )
         return row["id"]
     cur.execute(
-        "INSERT INTO customers (name, email, phone) VALUES (%s, %s, %s)",
-        (name, email, phone),
+        "INSERT INTO customers (company_id, name, email, phone) VALUES (%s, %s, %s, %s)",
+        (company_id, name, email, phone),
     )
     return cur.lastrowid
 
 
-def _sales_category_id(cur) -> int:
-    """The 'Sales' income category id, created once if the list doesn't have it."""
+def _sales_category_id(cur, company_id: int) -> int:
+    """The 'Sales' income category id for one company, created once if the
+    company's list doesn't have it."""
     cur.execute(
-        "SELECT id FROM categories WHERE name = %s AND kind = 'income'",
-        (SALES_CATEGORY,),
+        "SELECT id FROM categories WHERE company_id = %s AND name = %s AND kind = 'income'",
+        (company_id, SALES_CATEGORY),
     )
     row = cur.fetchone()
     if row:
         return row["id"]
     cur.execute(
-        "INSERT INTO categories (name, kind) VALUES (%s, 'income')",
-        (SALES_CATEGORY,),
+        "INSERT INTO categories (company_id, name, kind) VALUES (%s, %s, 'income')",
+        (company_id, SALES_CATEGORY),
     )
     return cur.lastrowid
 
 
-def create_invoice(customer_name: str, amount: float | None = None,
+def create_invoice(customer_name: str, company_id: int, amount: float | None = None,
                    description: str | None = None, line_items=None,
                    vat_inclusive: bool = False, due_in_days: int = 14,
                    issue_date: str | None = None, due_date: str | None = None,
@@ -160,17 +166,19 @@ def create_invoice(customer_name: str, amount: float | None = None,
     conn = get_connection()
     try:
         with conn.cursor() as cur:
-            customer_id = _get_or_create_customer(cur, customer_name, email, phone)
+            customer_id = _get_or_create_customer(cur, customer_name, company_id,
+                                                  email, phone)
 
             # Insert first with a temporary unique number, then set the real
             # human-facing number from the row's own id (guaranteed unique).
             cur.execute(
                 """INSERT INTO invoices
-                     (invoice_number, customer_id, issue_date, due_date,
+                     (company_id, invoice_number, customer_id, issue_date, due_date,
                       subtotal_amount, vat_amount, total_amount, currency,
                       line_items, notes, status)
-                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'sent')""",
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'sent')""",
                 (
+                    company_id,
                     f"PENDING-{issue.isoformat()}-{customer_id}",
                     customer_id, issue, due, subtotal, vat, amount, currency,
                     json.dumps(items, ensure_ascii=False) if items else None,
@@ -179,25 +187,28 @@ def create_invoice(customer_name: str, amount: float | None = None,
             )
             invoice_id = cur.lastrowid
             number = f"INV-{invoice_id:04d}"
-            cur.execute("UPDATE invoices SET invoice_number = %s WHERE id = %s",
-                        (number, invoice_id))
+            cur.execute("UPDATE invoices SET invoice_number = %s WHERE id = %s AND company_id = %s",
+                        (number, invoice_id, company_id))
     finally:
         conn.close()
 
-    return get_invoice(invoice_id=invoice_id)
+    return get_invoice(invoice_id=invoice_id, company_id=company_id)
 
 
 def get_invoice(invoice_id: int | None = None,
-                invoice_number: str | None = None) -> dict | None:
-    """Fetch one invoice (with customer + parsed line items), or None."""
+                invoice_number: str | None = None,
+                company_id: int = 1) -> dict | None:
+    """Fetch one invoice (with customer + parsed line items) for one company,
+    or None."""
     conn = get_connection()
     try:
         with conn.cursor() as cur:
             if invoice_id:
-                cur.execute(_INVOICE_SELECT + " WHERE i.id = %s", (int(invoice_id),))
+                cur.execute(_INVOICE_SELECT + " WHERE i.id = %s AND i.company_id = %s",
+                            (int(invoice_id), company_id))
             elif invoice_number:
-                cur.execute(_INVOICE_SELECT + " WHERE i.invoice_number = %s",
-                            (invoice_number,))
+                cur.execute(_INVOICE_SELECT + " WHERE i.invoice_number = %s AND i.company_id = %s",
+                            (invoice_number, company_id))
             else:
                 return None
             row = cur.fetchone()
@@ -206,16 +217,17 @@ def get_invoice(invoice_id: int | None = None,
     return _shape_invoice(row) if row else None
 
 
-def list_invoices(status: str | None = None, only_unpaid: bool = False,
-                  only_overdue: bool = False, customer: str | None = None,
-                  limit: int = 50) -> list[dict]:
-    """List invoices (newest first), each with a computed view status.
+def list_invoices(company_id: int, status: str | None = None,
+                  only_unpaid: bool = False, only_overdue: bool = False,
+                  customer: str | None = None, limit: int = 50) -> list[dict]:
+    """List one company's invoices (newest first), each with a computed view
+    status.
 
     only_unpaid keeps everything still owed (sent/overdue); only_overdue keeps
     just the ones past their due date. `status` filters on the raw stored status.
     """
-    sql = _INVOICE_SELECT + " WHERE 1=1"
-    params: list = []
+    sql = _INVOICE_SELECT + " WHERE i.company_id = %s"
+    params: list = [company_id]
     if status:
         sql += " AND i.status = %s"; params.append(status)
     if only_unpaid or only_overdue:
@@ -237,8 +249,8 @@ def list_invoices(status: str | None = None, only_unpaid: bool = False,
     return [_shape_invoice(r) for r in rows]
 
 
-def outstanding_summary() -> dict:
-    """Totals for what the business is owed: outstanding vs overdue."""
+def outstanding_summary(company_id: int) -> dict:
+    """Totals for what one company is owed: outstanding vs overdue."""
     today = date.today()
     conn = get_connection()
     try:
@@ -251,8 +263,8 @@ def outstanding_summary() -> dict:
                      COALESCE(SUM(CASE WHEN due_date IS NOT NULL AND due_date < %s
                                        THEN total_amount ELSE 0 END), 0) AS overdue_total
                    FROM invoices
-                   WHERE status = 'sent'""",
-                (today, today),
+                   WHERE status = 'sent' AND company_id = %s""",
+                (today, today, company_id),
             )
             row = cur.fetchone()
     finally:
@@ -266,16 +278,17 @@ def outstanding_summary() -> dict:
     }
 
 
-def mark_invoice_paid(invoice_id: int | None = None,
+def mark_invoice_paid(company_id: int, invoice_id: int | None = None,
                       invoice_number: str | None = None,
                       paid_date: str | None = None) -> dict:
-    """Mark an invoice paid and book the money as Sales income.
+    """Mark one company's invoice paid and book the money as Sales income.
 
     This is the moment income is recognised: a documents row (the invoice as the
     source, #4) plus a 'sorted' Sales transaction, so the money shows up in the
     P&L. Identify the invoice by id or by number (e.g. 'INV-0007').
     """
-    invoice = get_invoice(invoice_id=invoice_id, invoice_number=invoice_number)
+    invoice = get_invoice(invoice_id=invoice_id, invoice_number=invoice_number,
+                          company_id=company_id)
     if not invoice:
         return {"done": False, "reason": "invoice_not_found"}
     if invoice["status"] == "paid":
@@ -291,15 +304,16 @@ def mark_invoice_paid(invoice_id: int | None = None,
     conn = get_connection()
     try:
         with conn.cursor() as cur:
-            category_id = _sales_category_id(cur)
+            category_id = _sales_category_id(cur, company_id)
 
             # The invoice itself is the source document for this income (#4).
             cur.execute(
                 """INSERT INTO documents
-                     (source_key, doc_type, vendor, doc_date, total_amount,
-                      vat_amount, currency, raw_extraction, status)
-                   VALUES (%s, 'invoice', %s, %s, %s, %s, %s, %s, 'confirmed')""",
+                     (company_id, source_key, doc_type, vendor, doc_date,
+                      total_amount, vat_amount, currency, raw_extraction, status)
+                   VALUES (%s, %s, 'invoice', %s, %s, %s, %s, %s, %s, 'confirmed')""",
                 (
+                    company_id,
                     f"invoice:{invoice['invoice_number']}",
                     invoice["customer"], when, invoice["total_amount"],
                     invoice["vat_amount"], invoice["currency"],
@@ -310,11 +324,11 @@ def mark_invoice_paid(invoice_id: int | None = None,
 
             cur.execute(
                 """INSERT INTO transactions
-                     (document_id, txn_date, description, amount, vat_amount,
-                      currency, category_id, source, status)
-                   VALUES (%s, %s, %s, %s, %s, %s, %s, 'invoice', 'sorted')""",
+                     (company_id, document_id, txn_date, description, amount,
+                      vat_amount, currency, category_id, source, status)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'invoice', 'sorted')""",
                 (
-                    document_id, when,
+                    company_id, document_id, when,
                     f"Invoice {invoice['invoice_number']} — {invoice['customer']}",
                     invoice["total_amount"], invoice["vat_amount"],
                     invoice["currency"], category_id,
@@ -324,8 +338,8 @@ def mark_invoice_paid(invoice_id: int | None = None,
 
             cur.execute(
                 "UPDATE invoices SET status='paid', paid_date=%s, "
-                "income_transaction_id=%s WHERE id=%s",
-                (when, txn_id, invoice["id"]),
+                "income_transaction_id=%s WHERE id=%s AND company_id=%s",
+                (when, txn_id, invoice["id"], company_id),
             )
     finally:
         conn.close()
@@ -345,7 +359,7 @@ _INVOICE_SELECT = """
            i.line_items, i.notes, i.status, i.paid_date, i.income_transaction_id,
            cu.name AS customer, cu.email AS customer_email, cu.phone AS customer_phone
     FROM invoices i
-    JOIN customers cu ON cu.id = i.customer_id
+    JOIN customers cu ON cu.id = i.customer_id AND cu.company_id = i.company_id
 """
 
 

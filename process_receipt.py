@@ -18,8 +18,8 @@ from store import save_receipt
 
 
 def main() -> None:
-    if len(sys.argv) != 2:
-        print("Usage: python process_receipt.py <path-to-receipt>")
+    if len(sys.argv) not in (2, 3):
+        print("Usage: python process_receipt.py <path-to-receipt> [company_id]")
         sys.exit(1)
 
     path = Path(sys.argv[1])
@@ -27,20 +27,22 @@ def main() -> None:
         print(f"File not found: {path}")
         sys.exit(1)
 
+    company_id = int(sys.argv[2]) if len(sys.argv) == 3 else 1
+
     # 1) Read
     print(f"Reading {path.name} ...")
     receipt = read_receipt(path)
     print(f"  Vendor: {receipt.vendor} | Total: {receipt.currency} {receipt.total_amount:.2f}")
 
     # 2) Store
-    document_id, transaction_id = save_receipt(receipt)
+    document_id, transaction_id = save_receipt(receipt, company_id)
     print(f"  Saved as document #{document_id}, transaction #{transaction_id}")
 
     # 3) Categorize
     conn = get_connection()
     try:
         with conn.cursor() as cur:
-            result = categorize_transaction(cur, transaction_id)
+            result = categorize_transaction(cur, transaction_id, company_id)
     finally:
         conn.close()
 

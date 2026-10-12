@@ -120,27 +120,30 @@ def read_statement(path: Path, password: str = "") -> StatementExtraction:
     return first
 
 
-def store_statement(extraction: StatementExtraction, source_path: Path) -> int:
-    """Save the statement + all its lines. Returns the statement id."""
+def store_statement(extraction: StatementExtraction, source_path: Path,
+                    company_id: int) -> int:
+    """Save the statement + all its lines, owned by company_id. Returns the
+    statement id."""
     conn = get_connection()
     try:
         with conn.cursor() as cur:
             # The statement file itself is a 'statement' document.
             cur.execute(
                 """INSERT INTO documents
-                     (source_key, doc_type, vendor, doc_date, currency, raw_extraction, status)
-                   VALUES (%s, 'statement', %s, %s, %s, %s, 'read')""",
-                (str(source_path), extraction.bank, extraction.period_end,
+                     (company_id, source_key, doc_type, vendor, doc_date,
+                      currency, raw_extraction, status)
+                   VALUES (%s, %s, 'statement', %s, %s, %s, %s, 'read')""",
+                (company_id, str(source_path), extraction.bank, extraction.period_end,
                  extraction.currency, extraction.model_dump_json()),
             )
             document_id = cur.lastrowid
 
             cur.execute(
                 """INSERT INTO statements
-                     (document_id, account_ref, period_start, period_end,
+                     (company_id, document_id, account_ref, period_start, period_end,
                       opening_balance, closing_balance, currency)
-                   VALUES (%s, %s, %s, %s, %s, %s, %s)""",
-                (document_id, f"****{extraction.account_last4}",  # masked (#3)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s)""",
+                (company_id, document_id, f"****{extraction.account_last4}",  # masked (#3)
                  extraction.period_start, extraction.period_end,
                  extraction.opening_balance, extraction.closing_balance, extraction.currency),
             )
@@ -149,10 +152,10 @@ def store_statement(extraction: StatementExtraction, source_path: Path) -> int:
             for line in extraction.lines:
                 cur.execute(
                     """INSERT INTO statement_lines
-                         (statement_id, line_date, description, amount, direction,
-                          running_balance, match_status)
-                       VALUES (%s, %s, %s, %s, %s, %s, 'unmatched')""",
-                    (statement_id, line.date or None, line.description,
+                         (company_id, statement_id, line_date, description, amount,
+                          direction, running_balance, match_status)
+                       VALUES (%s, %s, %s, %s, %s, %s, %s, 'unmatched')""",
+                    (company_id, statement_id, line.date or None, line.description,
                      line.amount, line.direction, line.balance),
                 )
 

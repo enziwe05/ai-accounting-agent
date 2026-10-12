@@ -86,13 +86,17 @@ def match_line(line_date: date | None, line_amount: float, description: str,
 
 # --- Database glue -----------------------------------------------------------
 
-def _load_candidates(cur) -> list[Candidate]:
-    """Transactions that came from receipts/invoices (money the owner has a doc for)."""
+def _load_candidates(cur, company_id: int) -> list[Candidate]:
+    """Transactions that came from receipts/invoices (money the owner has a doc
+    for), restricted to one company so a statement is never matched against
+    another business's receipts."""
     cur.execute(
         """SELECT t.id, d.vendor, t.txn_date, t.amount
            FROM transactions t
            JOIN documents d ON d.id = t.document_id
-           WHERE d.doc_type IN ('receipt', 'invoice')"""
+           WHERE d.doc_type IN ('receipt', 'invoice')
+             AND t.company_id = %s AND d.company_id = %s""",
+        (company_id, company_id),
     )
     return [
         Candidate(transaction_id=r["id"], vendor=r["vendor"],
@@ -101,8 +105,9 @@ def _load_candidates(cur) -> list[Candidate]:
     ]
 
 
-def reconcile_statement(statement_id: int) -> dict:
-    """Match every DEBIT line of a statement against documents on file.
+def reconcile_statement(statement_id: int, company_id: int) -> dict:
+    """Match every DEBIT line of a statement against documents on file, all
+    within one company.
 
     Marks each line matched/unmatched and returns a summary with the unmatched
     (i.e. 'no document') spending lines.
@@ -110,13 +115,13 @@ def reconcile_statement(statement_id: int) -> dict:
     conn = get_connection()
     try:
         with conn.cursor() as cur:
-            candidates = _load_candidates(cur)
+            candidates = _load_candidates(cur, company_id)
 
             cur.execute(
                 """SELECT id, line_date, description, amount
                    FROM statement_lines
-                   WHERE statement_id = %s AND direction = 'debit'""",
-                (statement_id,),
+                   WHERE statement_id = %s AND company_id = %s AND direction = 'debit'""",
+                (statement_id, company_id),
             )
             debit_lines = cur.fetchall()
 
@@ -128,14 +133,15 @@ def reconcile_statement(statement_id: int) -> dict:
                     cur.execute(
                         """UPDATE statement_lines
                            SET match_status='matched', matched_transaction_id=%s
-                           WHERE id=%s""",
-                        (match.transaction_id, line["id"]),
+                           WHERE id=%s AND company_id=%s""",
+                        (match.transaction_id, line["id"], company_id),
                     )
                     matched += 1
                 else:
                     cur.execute(
-                        "UPDATE statement_lines SET match_status='unmatched' WHERE id=%s",
-                        (line["id"],),
+                        "UPDATE statement_lines SET match_status='unmatched' "
+                        "WHERE id=%s AND company_id=%s",
+                        (line["id"], company_id),
                     )
                     unmatched.append(line)
 

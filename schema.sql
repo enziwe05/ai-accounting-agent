@@ -1,10 +1,12 @@
 -- =============================================================================
 -- Phase 2 — Storage schema for the AI bookkeeping assistant.
 --
--- Seven tables. The relationships are the point: a transaction belongs to a
--- document, is put in a category by a rule, and (for bank statements) is matched
--- to a statement line. Anything the system is unsure about goes to review_queue
--- for a human — nothing is decided silently.
+-- Multi-tenant: every data table carries a company_id so one business's books
+-- never mix with another's. company_id defaults to 1 (M26, the first company)
+-- so any insert that forgets it still lands safely on company 1 during the
+-- transition; the code always sets it explicitly. A fresh database created from
+-- this file is therefore already isolated — identical in shape to a database
+-- that was upgraded by migrations/001_add_company_tenancy.sql.
 --
 -- Money is DECIMAL(12,2) — exact to the cent. Never FLOAT for money.
 -- Full card/account numbers are NEVER stored (non-negotiable #3): last 4 only.
@@ -14,17 +16,51 @@
 -- =============================================================================
 
 -- The database itself is created and selected by init_db.py, using the DB_NAME
--- from the environment (default 'bookkeeper'). This lets each company run on its
--- own separate database on the same MySQL server (bookkeeper_a, bookkeeper_b, ...).
+-- from the environment (default 'bookkeeper'). Tenancy is by company_id WITHIN
+-- one database, so a single shared bot can serve many companies.
+
+
+-- 0) companies — the tenants. M26 is company 1. -------------------------------
+CREATE TABLE IF NOT EXISTS companies (
+  id          INT AUTO_INCREMENT PRIMARY KEY,
+  name        VARCHAR(200) NOT NULL,
+  slug        VARCHAR(100) NOT NULL,
+  -- Subscription state, kept in sync from the web app's PayFast webhook.
+  status      ENUM('active','past_due','suspended','cancelled') NOT NULL DEFAULT 'active',
+  created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE KEY uq_company_slug (slug)
+) ENGINE=InnoDB;
+
+-- Seed M26 as company 1 (only if it isn't there yet).
+INSERT INTO companies (id, name, slug, status)
+SELECT 1, 'M26', 'm26', 'active'
+WHERE NOT EXISTS (SELECT 1 FROM companies WHERE id = 1);
+
+
+-- 0b) company_numbers — maps an inbound WhatsApp sender -> company. ------------
+--     On a single shared bot number, the sender's phone tells us whose books a
+--     message belongs to. Numbers are stored digits-only.
+CREATE TABLE IF NOT EXISTS company_numbers (
+  id           INT AUTO_INCREMENT PRIMARY KEY,
+  company_id   INT NOT NULL,
+  wa_number    VARCHAR(32) NOT NULL,
+  created_at   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT fk_cn_company FOREIGN KEY (company_id) REFERENCES companies(id),
+  UNIQUE KEY uq_cn_number (wa_number),
+  KEY idx_cn_company (company_id)
+) ENGINE=InnoDB;
 
 
 -- 1) categories — the chart of categories (Fuel, Rent, Sales, ...) ------------
+--    Unique PER COMPANY: two businesses may each have their own "Fuel".
 CREATE TABLE IF NOT EXISTS categories (
   id          INT AUTO_INCREMENT PRIMARY KEY,
+  company_id  INT NOT NULL DEFAULT 1,
   name        VARCHAR(100) NOT NULL,
   kind        ENUM('income','expense') NOT NULL DEFAULT 'expense',
   created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  UNIQUE KEY uq_category_name (name)
+  UNIQUE KEY uq_category_company_name (company_id, name),
+  KEY idx_cat_company (company_id)
 ) ENGINE=InnoDB;
 
 
@@ -32,6 +68,7 @@ CREATE TABLE IF NOT EXISTS categories (
 --    "vendor contains 'Engen' -> category Fuel". Code applies these, not the LLM.
 CREATE TABLE IF NOT EXISTS category_rules (
   id           INT AUTO_INCREMENT PRIMARY KEY,
+  company_id   INT NOT NULL DEFAULT 1,
   match_field  ENUM('vendor','description') NOT NULL DEFAULT 'vendor',
   match_type   ENUM('contains','equals','regex') NOT NULL DEFAULT 'contains',
   pattern      VARCHAR(255) NOT NULL,
@@ -41,7 +78,8 @@ CREATE TABLE IF NOT EXISTS category_rules (
   notes        VARCHAR(255) NULL,
   created_at   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT fk_rule_category FOREIGN KEY (category_id) REFERENCES categories(id),
-  KEY idx_rule_active (active, priority)
+  KEY idx_rule_active (active, priority),
+  KEY idx_rule_company (company_id)
 ) ENGINE=InnoDB;
 
 
@@ -50,6 +88,7 @@ CREATE TABLE IF NOT EXISTS category_rules (
 --    raw_extraction keeps the full JSON the reader returned = the audit trail.
 CREATE TABLE IF NOT EXISTS documents (
   id             INT AUTO_INCREMENT PRIMARY KEY,
+  company_id     INT NOT NULL DEFAULT 1,
   source_key     VARCHAR(500) NOT NULL,          -- file path / storage key (#4)
   doc_type       ENUM('receipt','invoice','statement','cash') NOT NULL DEFAULT 'receipt',
   vendor         VARCHAR(255) NULL,
@@ -63,7 +102,8 @@ CREATE TABLE IF NOT EXISTS documents (
   status         ENUM('read','needs_review','confirmed') NOT NULL DEFAULT 'read',
   created_at     DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   KEY idx_doc_vendor_date (vendor, doc_date),
-  KEY idx_doc_type (doc_type)
+  KEY idx_doc_type (doc_type),
+  KEY idx_doc_company (company_id)
 ) ENGINE=InnoDB;
 
 
@@ -71,6 +111,7 @@ CREATE TABLE IF NOT EXISTS documents (
 --    A receipt = 1 transaction; a statement = many (via statement_lines).
 CREATE TABLE IF NOT EXISTS transactions (
   id           INT AUTO_INCREMENT PRIMARY KEY,
+  company_id   INT NOT NULL DEFAULT 1,
   document_id  INT NOT NULL,                      -- link back to source (#4)
   txn_date     DATE NULL,
   description  VARCHAR(255) NULL,
@@ -84,13 +125,15 @@ CREATE TABLE IF NOT EXISTS transactions (
   CONSTRAINT fk_txn_document FOREIGN KEY (document_id) REFERENCES documents(id),
   CONSTRAINT fk_txn_category FOREIGN KEY (category_id) REFERENCES categories(id),
   KEY idx_txn_date (txn_date),
-  KEY idx_txn_status (status)
+  KEY idx_txn_status (status),
+  KEY idx_txn_company (company_id)
 ) ENGINE=InnoDB;
 
 
 -- 5) statements — a bank statement upload (the monthly reconciliation event) ---
 CREATE TABLE IF NOT EXISTS statements (
   id               INT AUTO_INCREMENT PRIMARY KEY,
+  company_id       INT NOT NULL DEFAULT 1,
   document_id      INT NOT NULL,                  -- the uploaded statement file
   account_ref      VARCHAR(100) NULL,             -- reference/label, never full acct no. (#3)
   period_start     DATE NULL,
@@ -99,7 +142,8 @@ CREATE TABLE IF NOT EXISTS statements (
   closing_balance  DECIMAL(12,2) NULL,
   currency         CHAR(3) NOT NULL DEFAULT 'ZAR',
   created_at       DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  CONSTRAINT fk_stmt_document FOREIGN KEY (document_id) REFERENCES documents(id)
+  CONSTRAINT fk_stmt_document FOREIGN KEY (document_id) REFERENCES documents(id),
+  KEY idx_stmt_company (company_id)
 ) ENGINE=InnoDB;
 
 
@@ -108,6 +152,7 @@ CREATE TABLE IF NOT EXISTS statements (
 --    match_status = 'unmatched' is exactly the "no document" the owner must see.
 CREATE TABLE IF NOT EXISTS statement_lines (
   id                     INT AUTO_INCREMENT PRIMARY KEY,
+  company_id             INT NOT NULL DEFAULT 1,
   statement_id           INT NOT NULL,
   line_date              DATE NULL,
   description            VARCHAR(255) NULL,
@@ -119,7 +164,8 @@ CREATE TABLE IF NOT EXISTS statement_lines (
   created_at             DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT fk_line_statement FOREIGN KEY (statement_id) REFERENCES statements(id),
   CONSTRAINT fk_line_txn FOREIGN KEY (matched_transaction_id) REFERENCES transactions(id),
-  KEY idx_line_match (match_status)
+  KEY idx_line_match (match_status),
+  KEY idx_line_company (company_id)
 ) ENGINE=InnoDB;
 
 
@@ -127,6 +173,7 @@ CREATE TABLE IF NOT EXISTS statement_lines (
 --    LLM category suggestions, missing documents, suspected duplicates. (#1, #2)
 CREATE TABLE IF NOT EXISTS review_queue (
   id                    INT AUTO_INCREMENT PRIMARY KEY,
+  company_id            INT NOT NULL DEFAULT 1,
   transaction_id        INT NULL,
   document_id           INT NULL,
   reason                ENUM('llm_suggested_category','no_document','possible_duplicate','unreadable_field') NOT NULL,
@@ -139,7 +186,8 @@ CREATE TABLE IF NOT EXISTS review_queue (
   CONSTRAINT fk_rq_txn FOREIGN KEY (transaction_id) REFERENCES transactions(id),
   CONSTRAINT fk_rq_document FOREIGN KEY (document_id) REFERENCES documents(id),
   CONSTRAINT fk_rq_category FOREIGN KEY (suggested_category_id) REFERENCES categories(id),
-  KEY idx_rq_status (status)
+  KEY idx_rq_status (status),
+  KEY idx_rq_company (company_id)
 ) ENGINE=InnoDB;
 
 
@@ -147,6 +195,7 @@ CREATE TABLE IF NOT EXISTS review_queue (
 --    So the owner can read the conversations users had with the assistant.
 CREATE TABLE IF NOT EXISTS message_log (
   id          BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  company_id  INT NOT NULL DEFAULT 1,
   wa_from     VARCHAR(32) NOT NULL,                    -- the user's WhatsApp number
   direction   ENUM('in','out') NOT NULL,               -- 'in' = from user, 'out' = from bot
   kind        ENUM('text','image','document','system') NOT NULL DEFAULT 'text',
@@ -157,7 +206,8 @@ CREATE TABLE IF NOT EXISTS message_log (
   created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   KEY idx_ml_from (wa_from),
   KEY idx_ml_time (created_at),
-  KEY idx_ml_msgid (wa_msg_id)
+  KEY idx_ml_msgid (wa_msg_id),
+  KEY idx_ml_company (company_id)
 ) ENGINE=InnoDB;
 
 
@@ -173,13 +223,16 @@ CREATE TABLE IF NOT EXISTS message_log (
 -- =============================================================================
 
 -- 9) customers — the people/companies the business invoices --------------------
+--    Unique PER COMPANY: two businesses may each have a customer called "Acme".
 CREATE TABLE IF NOT EXISTS customers (
   id          INT AUTO_INCREMENT PRIMARY KEY,
+  company_id  INT NOT NULL DEFAULT 1,
   name        VARCHAR(200) NOT NULL,
   email       VARCHAR(200) NULL,
   phone       VARCHAR(40) NULL,
   created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  UNIQUE KEY uq_customer_name (name)
+  UNIQUE KEY uq_customer_company_name (company_id, name),
+  KEY idx_cust_company (company_id)
 ) ENGINE=InnoDB;
 
 
@@ -187,8 +240,10 @@ CREATE TABLE IF NOT EXISTS customers (
 --     line_items keeps the itemised work/goods as JSON (same idea as a receipt's
 --     raw_extraction). income_transaction_id links to the transaction created
 --     when the invoice is paid, so paid income traces back to its invoice (#4).
+--     Invoice numbers are unique PER COMPANY (each business has its own INV-0001).
 CREATE TABLE IF NOT EXISTS invoices (
   id                     INT AUTO_INCREMENT PRIMARY KEY,
+  company_id             INT NOT NULL DEFAULT 1,
   invoice_number         VARCHAR(40) NOT NULL,           -- e.g. INV-0007 (human-facing)
   customer_id            INT NOT NULL,
   issue_date             DATE NOT NULL,
@@ -205,7 +260,8 @@ CREATE TABLE IF NOT EXISTS invoices (
   created_at             DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT fk_invoice_customer FOREIGN KEY (customer_id) REFERENCES customers(id),
   CONSTRAINT fk_invoice_income_txn FOREIGN KEY (income_transaction_id) REFERENCES transactions(id),
-  UNIQUE KEY uq_invoice_number (invoice_number),
+  UNIQUE KEY uq_invoice_company_number (company_id, invoice_number),
   KEY idx_invoice_status (status),
-  KEY idx_invoice_due (due_date)
+  KEY idx_invoice_due (due_date),
+  KEY idx_inv_company (company_id)
 ) ENGINE=InnoDB;

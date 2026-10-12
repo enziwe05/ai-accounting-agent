@@ -33,10 +33,11 @@ from cfo_agent import ask_cfo
 from db import db_cursor, get_connection
 from read_receipt import read_receipt
 from security import (
-    allow_rate, cap_message, is_authorized, print_security_audit,
+    _owner_numbers, allow_rate, cap_message, print_security_audit,
     sanitize_untrusted, signature_ok,
 )
 from store import save_receipt
+from tenants import company_for_number, is_company_active
 from whatsapp import download_media, send_document, send_text
 
 VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "")
@@ -45,6 +46,37 @@ APP_SECRET = os.getenv("WHATSAPP_APP_SECRET", "")  # when set, signatures are ve
 # Print (to the logs) whether we're running locked-down or wide-open, so the
 # operator can see at a glance if OWNER_NUMBERS / WHATSAPP_APP_SECRET are set.
 print_security_audit()
+
+
+def _backfill_default_company_numbers() -> None:
+    """Keep the existing M26 client working after multi-tenancy is switched on.
+
+    Before tenancy, access was controlled by OWNER_NUMBERS (an allowlist). Now a
+    sender is routed to a company via company_numbers. M26 is company 1, so we
+    map each OWNER_NUMBERS entry to company 1 if it isn't already mapped — a
+    one-time, idempotent backfill. New companies register their own numbers at
+    provisioning time, so this only ever affects M26's legacy numbers.
+    """
+    nums = _owner_numbers()
+    if not nums:
+        return
+    try:
+        with db_cursor() as cur:
+            for n in nums:
+                cur.execute(
+                    "INSERT IGNORE INTO company_numbers (company_id, wa_number) "
+                    "VALUES (1, %s)",
+                    (n,),
+                )
+        print(f"[tenancy] ensured {len(nums)} M26 owner number(s) map to company 1")
+    except Exception as e:
+        # If the tenancy migration hasn't run yet (no company_numbers table),
+        # don't crash startup — just log it so the operator runs the migration.
+        print(f"[tenancy] could not backfill company_numbers ({e}); "
+              "run migrations/001_add_company_tenancy.sql")
+
+
+_backfill_default_company_numbers()
 
 # Sent (as static text, no AI call) when an approved owner is messaging too fast.
 RATE_LIMIT_NOTICE = "You're sending messages very quickly — give me a moment to catch up."
@@ -84,26 +116,27 @@ _GREETINGS = {"hi", "hie", "hey", "hello", "hallo", "yebo", "start", "help",
               "menu", "hi there", "good morning", "good afternoon", "good evening"}
 
 
-def log_message(wa_from: str, direction: str, body: str, kind: str = "text",
-                wa_msg_id: str | None = None) -> None:
+def log_message(wa_from: str, direction: str, body: str, company_id: int,
+                kind: str = "text", wa_msg_id: str | None = None) -> None:
     """Save one message (in or out) so the owner can read the conversations later.
 
-    wa_msg_id is WhatsApp's own id for the message, kept so that a message the
-    owner later quotes/replies to can be looked up. Logging must never break
-    message handling, so any failure here is swallowed.
+    company_id ties the message to the business it belongs to. wa_msg_id is
+    WhatsApp's own id for the message, kept so that a message the owner later
+    quotes/replies to can be looked up. Logging must never break message
+    handling, so any failure here is swallowed.
     """
     try:
         with db_cursor() as cur:
             cur.execute(
-                "INSERT INTO message_log (wa_from, direction, kind, body, wa_msg_id) "
-                "VALUES (%s, %s, %s, %s, %s)",
-                (wa_from, direction, kind, body, wa_msg_id),
+                "INSERT INTO message_log (company_id, wa_from, direction, kind, body, wa_msg_id) "
+                "VALUES (%s, %s, %s, %s, %s, %s)",
+                (company_id, wa_from, direction, kind, body, wa_msg_id),
             )
     except Exception:
         pass
 
 
-def reply(sender: str, text: str, kind: str = "text") -> None:
+def reply(sender: str, text: str, company_id: int, kind: str = "text") -> None:
     """Send the reply, then log it (with the id WhatsApp assigns) so the owner
     can later swipe-to-reply to it and we can look it up."""
     resp = send_text(sender, text)
@@ -112,7 +145,7 @@ def reply(sender: str, text: str, kind: str = "text") -> None:
         wamid = resp["messages"][0]["id"]
     except (KeyError, IndexError, TypeError):
         pass
-    log_message(sender, "out", text, kind, wa_msg_id=wamid)
+    log_message(sender, "out", text, company_id, kind, wa_msg_id=wamid)
 
 
 def _trim(history: list) -> None:
@@ -133,6 +166,9 @@ app = FastAPI()
 
 from dashboard_api import router as dashboard_router
 app.include_router(dashboard_router)
+
+from provision_api import router as provision_router
+app.include_router(provision_router)
 
 
 @app.api_route("/health", methods=["GET", "HEAD"])
@@ -192,59 +228,65 @@ def handle_payload(body: dict) -> None:
         for change in entry.get("changes", []):
             value = change.get("value", {})
             for msg in value.get("messages", []):
+                sender = msg.get("from")
+                # 1) Tenant routing + access control in one step: the sender's
+                #    number tells us whose books this is. A number not registered
+                #    to any company is an unknown stranger — ignored silently (no
+                #    reply, no AI call, nothing revealed), exactly as before.
+                company_id = company_for_number(sender) if sender else None
+                if not company_id:
+                    print(f"[blocked] message from unregistered number ({msg.get('type')})")
+                    continue
+                # 2) A suspended/cancelled subscription pauses that company's bot
+                #    without touching its data.
+                if not is_company_active(company_id):
+                    print(f"[paused] company {company_id} is not active — ignoring message")
+                    continue
                 try:
-                    _handle_message(msg)
+                    _handle_message(msg, company_id)
                 except Exception as e:  # never let one bad message kill the worker
-                    sender = msg.get("from")
                     if sender:
-                        reply(sender, f"Sorry, something went wrong: {e}")
+                        reply(sender, f"Sorry, something went wrong: {e}", company_id)
 
 
-def _handle_message(msg: dict) -> None:
+def _handle_message(msg: dict, company_id: int) -> None:
     sender = msg["from"]
     mtype = msg.get("type")
 
-    # 1) Access control: only approved owner numbers may use the bot. An unknown
-    #    sender is logged (so the owner can see the attempt) and then ignored —
-    #    no reply, no AI call, nothing revealed.
-    if not is_authorized(sender):
-        log_message(sender, "in", f"[blocked: unauthorized sender, {mtype}]", "system")
-        return
-
-    # 2) Rate limit: stop one number flooding us with (paid) AI work. The sender
-    #    is already an approved owner here, so a brief static notice is safe.
+    # Rate limit: stop one number flooding us with (paid) AI work. The sender is
+    # already a known, active company here, so a brief static notice is safe.
     if not allow_rate(sender):
-        log_message(sender, "in", "[rate limited]", "system")
-        reply(sender, RATE_LIMIT_NOTICE)
+        log_message(sender, "in", "[rate limited]", company_id, "system")
+        reply(sender, RATE_LIMIT_NOTICE, company_id)
         return
 
     wamid = msg.get("id")
     if mtype == "text":
         body = msg["text"]["body"]
-        log_message(sender, "in", body, "text", wa_msg_id=wamid)
+        log_message(sender, "in", body, company_id, "text", wa_msg_id=wamid)
         # If the owner swiped-to-reply to an earlier message, fetch that message
         # so the agent knows what they're referring to.
-        quoted = _quoted_message(msg)
-        _handle_text(sender, body, quoted)
+        quoted = _quoted_message(msg, company_id)
+        _handle_text(sender, body, company_id, quoted)
     elif mtype == "image":
-        log_message(sender, "in", "[receipt photo]", "image", wa_msg_id=wamid)
-        _handle_image(sender, msg["image"]["id"])
+        log_message(sender, "in", "[receipt photo]", company_id, "image", wa_msg_id=wamid)
+        _handle_image(sender, msg["image"]["id"], company_id)
     elif mtype == "document" and "document" in msg:
-        log_message(sender, "in", "[document]", "document", wa_msg_id=wamid)
-        _handle_image(sender, msg["document"]["id"])  # e.g. a PDF invoice
+        log_message(sender, "in", "[document]", company_id, "document", wa_msg_id=wamid)
+        _handle_image(sender, msg["document"]["id"], company_id)  # e.g. a PDF invoice
     else:
-        log_message(sender, "in", f"[{mtype} message]", "system", wa_msg_id=wamid)
+        log_message(sender, "in", f"[{mtype} message]", company_id, "system", wa_msg_id=wamid)
         reply(sender, "Send me a photo of a receipt to file it, or ask a "
-                      "question about your books.")
+                      "question about your books.", company_id)
 
 
-def _quoted_message(msg: dict) -> dict | None:
+def _quoted_message(msg: dict, company_id: int) -> dict | None:
     """If this message is a reply to an earlier one, look that earlier message up.
 
     WhatsApp puts a `context` with the quoted message's id on a swipe-to-reply.
-    We find that id in message_log (both the bot's and the owner's past messages
-    are recorded) and return its direction + body, or None if we can't find it
-    (e.g. it predates message-id logging).
+    We find that id in this company's message_log (both the bot's and the owner's
+    past messages are recorded) and return its direction + body, or None if we
+    can't find it (e.g. it predates message-id logging).
     """
     ctx = msg.get("context") or {}
     quoted_id = ctx.get("id")
@@ -254,15 +296,16 @@ def _quoted_message(msg: dict) -> dict | None:
         with db_cursor() as cur:
             cur.execute(
                 "SELECT direction, kind, body FROM message_log "
-                "WHERE wa_msg_id = %s ORDER BY id DESC LIMIT 1",
-                (quoted_id,),
+                "WHERE wa_msg_id = %s AND company_id = %s ORDER BY id DESC LIMIT 1",
+                (quoted_id, company_id),
             )
             return cur.fetchone()
     except Exception:
         return None
 
 
-def _handle_text(sender: str, text: str, quoted: dict | None = None) -> None:
+def _handle_text(sender: str, text: str, company_id: int,
+                 quoted: dict | None = None) -> None:
     text = cap_message(text)  # bound one huge message so it can't blow up token cost
     history = CONVERSATIONS.setdefault(sender, [])
 
@@ -272,7 +315,7 @@ def _handle_text(sender: str, text: str, quoted: dict | None = None) -> None:
         history.append({"role": "user", "content": text})
         history.append({"role": "assistant", "content": WELCOME})
         _trim(history)
-        reply(sender, WELCOME)
+        reply(sender, WELCOME, company_id)
         return
 
     # If the owner replied to an earlier message, give the agent that context so
@@ -289,32 +332,33 @@ def _handle_text(sender: str, text: str, quoted: dict | None = None) -> None:
 
     files: list[str] = []
     answer = ask_cfo(question, verbose=False, system_suffix=WHATSAPP_STYLE,
-                     history=history, files_out=files)
+                     history=history, files_out=files, company_id=company_id)
     _trim(history)
-    reply(sender, answer or "I didn't catch that — try asking again.")
+    reply(sender, answer or "I didn't catch that — try asking again.", company_id)
 
     # If the agent produced a report file, send it as a WhatsApp attachment.
     for path in files:
         try:
             send_document(sender, path)
-            log_message(sender, "out", f"[report file: {os.path.basename(path)}]", "document")
+            log_message(sender, "out", f"[report file: {os.path.basename(path)}]",
+                        company_id, "document")
         except Exception as e:
-            reply(sender, f"(I made your report but couldn't attach it: {e})")
+            reply(sender, f"(I made your report but couldn't attach it: {e})", company_id)
 
 
-def _handle_image(sender: str, media_id: str) -> None:
+def _handle_image(sender: str, media_id: str, company_id: int) -> None:
     content, mime = download_media(media_id)
     ext = ".png" if "png" in mime else (".pdf" if "pdf" in mime else ".jpg")
     path = UPLOADS / f"{media_id}{ext}"
     path.write_bytes(content)
 
     receipt = read_receipt(path)
-    _, transaction_id = save_receipt(receipt)
+    _, transaction_id = save_receipt(receipt, company_id)
 
     conn = get_connection()
     try:
         with conn.cursor() as cur:
-            result = categorize_transaction(cur, transaction_id)
+            result = categorize_transaction(cur, transaction_id, company_id)
     finally:
         conn.close()
 
@@ -339,4 +383,4 @@ def _handle_image(sender: str, media_id: str) -> None:
     history.append({"role": "assistant", "content": message})
     _trim(history)
 
-    reply(sender, message)
+    reply(sender, message, company_id)

@@ -102,24 +102,25 @@ def suggest_category(vendor: str | None, description: str | None,
 
 # --- Database glue -----------------------------------------------------------
 
-def load_rules(cur) -> list[Rule]:
+def load_rules(cur, company_id: int) -> list[Rule]:
     cur.execute(
         """SELECT r.id, r.match_field, r.match_type, r.pattern,
                   r.category_id, c.name AS category_name, r.priority
            FROM category_rules r
            JOIN categories c ON c.id = r.category_id
-           WHERE r.active = 1"""
+           WHERE r.active = 1 AND r.company_id = %s""",
+        (company_id,),
     )
     return [Rule(**row) for row in cur.fetchall()]
 
 
-def load_category_map(cur) -> dict:
-    cur.execute("SELECT id, name FROM categories")
+def load_category_map(cur, company_id: int) -> dict:
+    cur.execute("SELECT id, name FROM categories WHERE company_id = %s", (company_id,))
     return {row["name"]: row["id"] for row in cur.fetchall()}
 
 
-def resolve_category(cur, name: str) -> tuple[dict | None, list[dict]]:
-    """Match a spoken category name to a real category row.
+def resolve_category(cur, name: str, company_id: int) -> tuple[dict | None, list[dict]]:
+    """Match a spoken category name to a real category row, within one company.
 
     Returns (chosen, all_categories). `chosen` is the row (dict with id/name) for
     an exact name match, else a single unambiguous 'contains' match, else None
@@ -127,7 +128,7 @@ def resolve_category(cur, name: str) -> tuple[dict | None, list[dict]]:
     is shared by every place a human names a category, so the matching is
     identical everywhere.
     """
-    cur.execute("SELECT id, name FROM categories")
+    cur.execute("SELECT id, name FROM categories WHERE company_id = %s", (company_id,))
     cats = cur.fetchall()
     want = (name or "").strip().lower()
     if not want:
@@ -138,27 +139,30 @@ def resolve_category(cur, name: str) -> tuple[dict | None, list[dict]]:
     return chosen, cats
 
 
-def categorize_transaction(cur, txn_id: int) -> dict:
-    """Categorize one transaction. Returns a small dict describing what happened."""
+def categorize_transaction(cur, txn_id: int, company_id: int) -> dict:
+    """Categorize one transaction (within its company). Returns a small dict
+    describing what happened. The transaction, its rules and the review-queue
+    row are all scoped to company_id so businesses never cross."""
     cur.execute(
         """SELECT t.id, t.description, d.vendor
            FROM transactions t
            JOIN documents d ON d.id = t.document_id
-           WHERE t.id = %s""",
-        (txn_id,),
+           WHERE t.id = %s AND t.company_id = %s AND d.company_id = %s""",
+        (txn_id, company_id, company_id),
     )
     txn = cur.fetchone()
     if txn is None:
         raise ValueError(f"No transaction with id {txn_id}")
 
-    rules = load_rules(cur)
+    rules = load_rules(cur, company_id)
     matched = match_rule(txn["vendor"], txn["description"], rules)
 
     if matched is not None:
         # A rule decided it — apply directly, mark sorted.
         cur.execute(
-            "UPDATE transactions SET category_id=%s, status='sorted' WHERE id=%s",
-            (matched.category_id, txn_id),
+            "UPDATE transactions SET category_id=%s, status='sorted' "
+            "WHERE id=%s AND company_id=%s",
+            (matched.category_id, txn_id, company_id),
         )
         return {
             "outcome": "sorted",
@@ -167,21 +171,23 @@ def categorize_transaction(cur, txn_id: int) -> dict:
         }
 
     # No rule matched → ask the model, but ONLY as a review-queue suggestion.
-    category_map = load_category_map(cur)
+    category_map = load_category_map(cur, company_id)
     suggestion = suggest_category(txn["vendor"], txn["description"], list(category_map))
     suggested_id = category_map.get(suggestion.category)  # None if 'Unknown'
 
     cur.execute(
         """INSERT INTO review_queue
-             (transaction_id, reason, suggested_category_id, suggestion_note)
-           VALUES (%s, 'llm_suggested_category', %s, %s)""",
+             (company_id, transaction_id, reason, suggested_category_id, suggestion_note)
+           VALUES (%s, %s, 'llm_suggested_category', %s, %s)""",
         (
+            company_id,
             txn_id,
             suggested_id,
             f"Suggested '{suggestion.category}' ({suggestion.confidence}): {suggestion.reason}",
         ),
     )
-    cur.execute("UPDATE transactions SET status='needs_review' WHERE id=%s", (txn_id,))
+    cur.execute("UPDATE transactions SET status='needs_review' WHERE id=%s AND company_id=%s",
+                (txn_id, company_id))
 
     return {
         "outcome": "needs_review",
@@ -192,12 +198,16 @@ def categorize_transaction(cur, txn_id: int) -> dict:
     }
 
 
-def categorize_pending() -> None:
-    """CLI: categorize every transaction currently marked needs_review."""
+def categorize_pending(company_id: int = 1) -> None:
+    """CLI: categorize every transaction currently marked needs_review for one
+    company (defaults to company 1 / M26 for the standalone script)."""
     conn = get_connection()
     try:
         with conn.cursor() as cur:
-            cur.execute("SELECT id FROM transactions WHERE status='needs_review'")
+            cur.execute(
+                "SELECT id FROM transactions WHERE status='needs_review' AND company_id=%s",
+                (company_id,),
+            )
             ids = [row["id"] for row in cur.fetchall()]
 
         if not ids:
@@ -206,11 +216,13 @@ def categorize_pending() -> None:
 
         for txn_id in ids:
             with conn.cursor() as cur:
-                result = categorize_transaction(cur, txn_id)
+                result = categorize_transaction(cur, txn_id, company_id)
             print(f"Transaction #{txn_id}: {result}")
     finally:
         conn.close()
 
 
 if __name__ == "__main__":
-    categorize_pending()
+    import sys
+    cid = int(sys.argv[1]) if len(sys.argv) > 1 else 1
+    categorize_pending(cid)

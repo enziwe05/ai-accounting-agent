@@ -15,14 +15,16 @@ from statement_reader import read_statement, store_statement
 
 
 def main() -> None:
-    if len(sys.argv) != 2:
-        print("Usage: python process_statement.py <path-to-statement.pdf>")
+    if len(sys.argv) not in (2, 3):
+        print("Usage: python process_statement.py <path-to-statement.pdf> [company_id]")
         sys.exit(1)
 
     path = Path(sys.argv[1])
     if not path.exists():
         print(f"File not found: {path}")
         sys.exit(1)
+
+    company_id = int(sys.argv[2]) if len(sys.argv) == 3 else 1
 
     print(f"Reading {path.name} (this can take a moment for a long statement) ...")
     extraction = read_statement(path)
@@ -31,11 +33,11 @@ def main() -> None:
     print(f"  Opening: {extraction.opening_balance}  Closing: {extraction.closing_balance}")
     print(f"  Lines read: {len(extraction.lines)}")
 
-    statement_id = store_statement(extraction, path)
+    statement_id = store_statement(extraction, path, company_id)
     print(f"  Stored as statement #{statement_id}")
 
     print("\nReconciling spending against documents on file ...")
-    result = reconcile_statement(statement_id)
+    result = reconcile_statement(statement_id, company_id)
     print(f"  Debit (spending) lines: {result['debit_lines']}")
     print(f"  Matched to a document:  {result['matched']}")
     print(f"  NO document on file:    {result['unmatched_count']}")

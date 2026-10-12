@@ -1,8 +1,10 @@
 """
 Dashboard read API — lightweight endpoints for the Incwadzi SaaS web app.
 
-Protected by a shared API key in the X-Api-Key request header. All responses
-are JSON. Read-only — no writes live here.
+Protected by a shared API key in the X-Api-Key header (authenticates the web
+app as a trusted caller). Multi-tenant: every request must also carry an
+X-Company-Id header, and EVERY query is scoped to that company so one customer
+can never see another's books. All responses are JSON. Read-only.
 """
 
 import os
@@ -24,9 +26,29 @@ def _check_key(x_api_key: str) -> None:
         raise HTTPException(status_code=401, detail="Invalid API key")
 
 
+def _company(x_company_id: str) -> int:
+    """Validate and return the tenant company id from the X-Company-Id header.
+
+    Every endpoint resolves this and scopes its queries to it, so data from one
+    company is never returned to another. An unknown id simply yields empty
+    results (the queries match no rows), which is the safe default.
+    """
+    try:
+        cid = int(x_company_id)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="X-Company-Id header required")
+    if cid <= 0:
+        raise HTTPException(status_code=400, detail="Invalid X-Company-Id")
+    return cid
+
+
 @router.get("/summary")
-def summary(x_api_key: str = Header(...)):
+def summary(
+    x_api_key: str = Header(...),
+    x_company_id: str = Header(...),
+):
     _check_key(x_api_key)
+    company_id = _company(x_company_id)
 
     today = date.today()
     month_start = today.replace(day=1).isoformat()
@@ -38,29 +60,33 @@ def summary(x_api_key: str = Header(...)):
                 COALESCE(SUM(CASE WHEN c.kind='income'  THEN t.amount ELSE 0 END), 0) AS income,
                 COALESCE(SUM(CASE WHEN c.kind='expense' THEN t.amount ELSE 0 END), 0) AS expenses
             FROM transactions t
-            LEFT JOIN categories c ON c.id = t.category_id
-            WHERE t.txn_date >= %s
+            LEFT JOIN categories c ON c.id = t.category_id AND c.company_id = t.company_id
+            WHERE t.company_id = %s AND t.txn_date >= %s
             """,
-            [month_start],
+            [company_id, month_start],
         )
         row = cur.fetchone()
         income = float(row["income"])
         expenses = float(row["expenses"])
 
         cur.execute(
-            "SELECT COUNT(*) AS cnt FROM transactions WHERE txn_date >= %s",
-            [month_start],
+            "SELECT COUNT(*) AS cnt FROM transactions WHERE company_id = %s AND txn_date >= %s",
+            [company_id, month_start],
         )
         txn_count = cur.fetchone()["cnt"]
 
-        cur.execute("SELECT COUNT(*) AS cnt FROM review_queue WHERE status='pending'")
+        cur.execute(
+            "SELECT COUNT(*) AS cnt FROM review_queue WHERE company_id = %s AND status='pending'",
+            [company_id],
+        )
         pending = cur.fetchone()["cnt"]
 
         cur.execute(
             """
             SELECT COALESCE(SUM(total_amount), 0) AS total, COUNT(*) AS cnt
-            FROM invoices WHERE status IN ('sent','draft')
-            """
+            FROM invoices WHERE company_id = %s AND status IN ('sent','draft')
+            """,
+            [company_id],
         )
         inv = cur.fetchone()
 
@@ -83,12 +109,14 @@ def recent_transactions(
     status: str = "all",
     search: str = "",
     x_api_key: str = Header(...),
+    x_company_id: str = Header(...),
 ):
     _check_key(x_api_key)
+    company_id = _company(x_company_id)
     safe_limit = min(limit, 100)
 
-    clauses: list[str] = []
-    params: list = []
+    clauses: list[str] = ["t.company_id = %s"]
+    params: list = [company_id]
 
     if status == "pending":
         clauses.append("t.status = 'pending'")
@@ -100,7 +128,7 @@ def recent_transactions(
         s = f"%{search.strip()[:100]}%"
         params.extend([s, s])
 
-    where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+    where = "WHERE " + " AND ".join(clauses)
     params.append(safe_limit)
 
     with db_cursor() as cur:
@@ -110,8 +138,8 @@ def recent_transactions(
                    c.name AS category, c.kind,
                    d.doc_type AS source
             FROM transactions t
-            LEFT JOIN categories c ON c.id = t.category_id
-            LEFT JOIN documents d  ON d.id = t.document_id
+            LEFT JOIN categories c ON c.id = t.category_id AND c.company_id = t.company_id
+            LEFT JOIN documents d  ON d.id = t.document_id AND d.company_id = t.company_id
             {where}
             ORDER BY t.created_at DESC
             LIMIT %s
@@ -136,8 +164,12 @@ def recent_transactions(
 
 
 @router.get("/documents")
-def documents_list(x_api_key: str = Header(...)):
+def documents_list(
+    x_api_key: str = Header(...),
+    x_company_id: str = Header(...),
+):
     _check_key(x_api_key)
+    company_id = _company(x_company_id)
 
     with db_cursor() as cur:
         cur.execute(
@@ -145,9 +177,11 @@ def documents_list(x_api_key: str = Header(...)):
             SELECT id, doc_type, vendor, total_amount, doc_date,
                    currency, vat_amount, paid_by_last4, uploaded_by, status, created_at
             FROM documents
+            WHERE company_id = %s
             ORDER BY created_at DESC
             LIMIT 100
             """,
+            [company_id],
         )
         rows = cur.fetchall()
 
@@ -170,8 +204,13 @@ def documents_list(x_api_key: str = Header(...)):
 
 
 @router.post("/cfo/ask")
-async def cfo_ask(body: dict, x_api_key: str = Header(...)):
+async def cfo_ask(
+    body: dict,
+    x_api_key: str = Header(...),
+    x_company_id: str = Header(...),
+):
     _check_key(x_api_key)
+    company_id = _company(x_company_id)
     question = str(body.get("question", "")).strip()[:2000]
     history = list(body.get("history", []))
     if not question:
@@ -186,6 +225,7 @@ async def cfo_ask(body: dict, x_api_key: str = Header(...)):
                 question,
                 max_turns=8,
                 verbose=False,
+                company_id=company_id,
                 system_suffix=(
                     "Your reply will be displayed in a web chat interface. "
                     "Use plain text only — no markdown, no ** or ## symbols. "
@@ -201,8 +241,12 @@ async def cfo_ask(body: dict, x_api_key: str = Header(...)):
 
 
 @router.get("/invoices/outstanding")
-def outstanding_invoices(x_api_key: str = Header(...)):
+def outstanding_invoices(
+    x_api_key: str = Header(...),
+    x_company_id: str = Header(...),
+):
     _check_key(x_api_key)
+    company_id = _company(x_company_id)
 
     with db_cursor() as cur:
         cur.execute(
@@ -210,11 +254,12 @@ def outstanding_invoices(x_api_key: str = Header(...)):
             SELECT i.id, i.invoice_number, i.issue_date, i.due_date,
                    i.total_amount, i.status, cu.name AS customer
             FROM invoices i
-            JOIN customers cu ON cu.id = i.customer_id
-            WHERE i.status IN ('sent','draft')
+            JOIN customers cu ON cu.id = i.customer_id AND cu.company_id = i.company_id
+            WHERE i.company_id = %s AND i.status IN ('sent','draft')
             ORDER BY i.due_date ASC
             LIMIT 20
             """,
+            [company_id],
         )
         rows = cur.fetchall()
 
@@ -233,8 +278,12 @@ def outstanding_invoices(x_api_key: str = Header(...)):
 
 
 @router.get("/categories/spend")
-def category_spend(x_api_key: str = Header(...)):
+def category_spend(
+    x_api_key: str = Header(...),
+    x_company_id: str = Header(...),
+):
     _check_key(x_api_key)
+    company_id = _company(x_company_id)
 
     today = date.today()
     month_start = today.replace(day=1).isoformat()
@@ -244,13 +293,13 @@ def category_spend(x_api_key: str = Header(...)):
             """
             SELECT c.name AS category, SUM(t.amount) AS total
             FROM transactions t
-            JOIN categories c ON c.id = t.category_id
-            WHERE c.kind = 'expense' AND t.txn_date >= %s
+            JOIN categories c ON c.id = t.category_id AND c.company_id = t.company_id
+            WHERE t.company_id = %s AND c.kind = 'expense' AND t.txn_date >= %s
             GROUP BY c.name
             ORDER BY total DESC
             LIMIT 10
             """,
-            [month_start],
+            [company_id, month_start],
         )
         rows = cur.fetchall()
 
@@ -266,9 +315,14 @@ def category_spend(x_api_key: str = Header(...)):
 
 
 @router.get("/summary/monthly")
-def monthly_summary(months: int = 6, x_api_key: str = Header(...)):
+def monthly_summary(
+    months: int = 6,
+    x_api_key: str = Header(...),
+    x_company_id: str = Header(...),
+):
     """Last N months of income vs expenses for trend charts."""
     _check_key(x_api_key)
+    company_id = _company(x_company_id)
     safe_months = min(max(months, 2), 24)
 
     with db_cursor() as cur:
@@ -280,13 +334,14 @@ def monthly_summary(months: int = 6, x_api_key: str = Header(...)):
                 COALESCE(SUM(CASE WHEN c.kind='income'  THEN t.amount ELSE 0 END), 0) AS income,
                 COALESCE(SUM(CASE WHEN c.kind='expense' THEN t.amount ELSE 0 END), 0) AS expenses
             FROM transactions t
-            LEFT JOIN categories c ON c.id = t.category_id
-            WHERE t.txn_date >= DATE_SUB(CURDATE(), INTERVAL %s MONTH)
+            LEFT JOIN categories c ON c.id = t.category_id AND c.company_id = t.company_id
+            WHERE t.company_id = %s
+              AND t.txn_date >= DATE_SUB(CURDATE(), INTERVAL %s MONTH)
               AND t.txn_date IS NOT NULL
             GROUP BY month_key, month_label
             ORDER BY month_key ASC
             """,
-            [safe_months],
+            [company_id, safe_months],
         )
         rows = cur.fetchall()
 
@@ -302,8 +357,12 @@ def monthly_summary(months: int = 6, x_api_key: str = Header(...)):
 
 
 @router.get("/pending")
-def pending_items(x_api_key: str = Header(...)):
+def pending_items(
+    x_api_key: str = Header(...),
+    x_company_id: str = Header(...),
+):
     _check_key(x_api_key)
+    company_id = _company(x_company_id)
 
     with db_cursor() as cur:
         cur.execute(
@@ -313,11 +372,14 @@ def pending_items(x_api_key: str = Header(...)):
                    c.name AS suggested_category
             FROM review_queue rq
             LEFT JOIN transactions t   ON t.id  = rq.transaction_id
+                                       AND t.company_id = rq.company_id
             LEFT JOIN categories c     ON c.id  = rq.suggested_category_id
-            WHERE rq.status = 'pending'
+                                       AND c.company_id = rq.company_id
+            WHERE rq.company_id = %s AND rq.status = 'pending'
             ORDER BY rq.created_at DESC
             LIMIT 20
             """,
+            [company_id],
         )
         rows = cur.fetchall()
 

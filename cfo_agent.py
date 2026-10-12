@@ -36,15 +36,15 @@ def _json(obj) -> str:
 
 # --- Tool implementations (all read-only) -----------------------------------
 
-def tool_query_transactions(category=None, vendor=None, period_start=None,
+def tool_query_transactions(company_id, category=None, vendor=None, period_start=None,
                             period_end=None, status=None, limit=50) -> str:
     sql = """SELECT t.txn_date, d.vendor, t.description, t.amount, t.vat_amount,
                     t.currency, c.name AS category, t.status
              FROM transactions t
-             JOIN documents d ON d.id = t.document_id
-             LEFT JOIN categories c ON c.id = t.category_id
-             WHERE 1=1"""
-    params = []
+             JOIN documents d ON d.id = t.document_id AND d.company_id = t.company_id
+             LEFT JOIN categories c ON c.id = t.category_id AND c.company_id = t.company_id
+             WHERE t.company_id = %s"""
+    params = [company_id]
     if category:
         sql += " AND c.name LIKE %s"; params.append(f"%{category}%")
     if vendor:
@@ -67,7 +67,7 @@ def tool_query_transactions(category=None, vendor=None, period_start=None,
     return _json({"count": len(rows), "transactions": rows})
 
 
-def tool_list_recent_uploads(uploaded_on=None, uploaded_since=None, limit=20) -> str:
+def tool_list_recent_uploads(company_id, uploaded_on=None, uploaded_since=None, limit=20) -> str:
     """List transactions by WHEN THEY WERE ADDED (upload date), newest first.
 
     This is different from query_transactions, which filters by the date printed
@@ -79,10 +79,10 @@ def tool_list_recent_uploads(uploaded_on=None, uploaded_since=None, limit=20) ->
                     t.status, t.txn_date AS receipt_date,
                     DATE(t.created_at) AS uploaded_on
              FROM transactions t
-             JOIN documents d ON d.id = t.document_id
-             LEFT JOIN categories c ON c.id = t.category_id
-             WHERE 1=1"""
-    params = []
+             JOIN documents d ON d.id = t.document_id AND d.company_id = t.company_id
+             LEFT JOIN categories c ON c.id = t.category_id AND c.company_id = t.company_id
+             WHERE t.company_id = %s"""
+    params = [company_id]
     if uploaded_on:
         sql += " AND DATE(t.created_at) = %s"; params.append(uploaded_on)
     if uploaded_since:
@@ -99,8 +99,8 @@ def tool_list_recent_uploads(uploaded_on=None, uploaded_since=None, limit=20) ->
     return _json({"count": len(rows), "uploads": rows})
 
 
-def tool_get_spend_summary(period_start=None, period_end=None) -> str:
-    report = build_report(period_start, period_end)
+def tool_get_spend_summary(company_id, period_start=None, period_end=None) -> str:
+    report = build_report(period_start, period_end, company_id)
     return _json({
         "currency": report.currency,
         "income_total": report.income_total,
@@ -113,7 +113,7 @@ def tool_get_spend_summary(period_start=None, period_end=None) -> str:
     })
 
 
-def tool_get_document_details(vendor=None, document_id=None) -> str:
+def tool_get_document_details(company_id, vendor=None, document_id=None) -> str:
     """Return a slip's itemised lines (what was bought) plus its review status.
 
     Look up by document_id, or by vendor name (most recent match wins).
@@ -122,8 +122,9 @@ def tool_get_document_details(vendor=None, document_id=None) -> str:
                     d.currency, d.raw_extraction, t.status AS txn_status
              FROM documents d
              LEFT JOIN transactions t ON t.document_id = d.id
-             WHERE 1=1"""
-    params = []
+                                     AND t.company_id = d.company_id
+             WHERE d.company_id = %s"""
+    params = [company_id]
     if document_id:
         sql += " AND d.id = %s"; params.append(int(document_id))
     if vendor:
@@ -153,7 +154,7 @@ def tool_get_document_details(vendor=None, document_id=None) -> str:
     return _json(row)
 
 
-def tool_set_category(category, vendor=None, document_id=None, transaction_id=None) -> str:
+def tool_set_category(company_id, category, vendor=None, document_id=None, transaction_id=None) -> str:
     """Apply a category the OWNER has chosen to a transaction, and approve its review.
 
     This is the one action that changes the books. It only ever runs because the
@@ -165,7 +166,7 @@ def tool_set_category(category, vendor=None, document_id=None, transaction_id=No
     try:
         with conn.cursor() as cur:
             # 1) Resolve the category name -> id (exact, else unambiguous partial).
-            chosen, cats = resolve_category(cur, category)
+            chosen, cats = resolve_category(cur, category, company_id)
             if chosen is None:
                 return _json({
                     "done": False,
@@ -175,19 +176,22 @@ def tool_set_category(category, vendor=None, document_id=None, transaction_id=No
                     "note": "Ask the owner to pick one of the valid categories.",
                 })
 
-            # 2) Find the transaction to update.
+            # 2) Find the transaction to update (within this company only).
             if transaction_id:
-                cur.execute("SELECT id FROM transactions WHERE id=%s", (int(transaction_id),))
+                cur.execute("SELECT id FROM transactions WHERE id=%s AND company_id=%s",
+                            (int(transaction_id), company_id))
             elif document_id:
-                cur.execute("SELECT id FROM transactions WHERE document_id=%s ORDER BY id DESC LIMIT 1",
-                            (int(document_id),))
+                cur.execute("SELECT id FROM transactions WHERE document_id=%s AND company_id=%s "
+                            "ORDER BY id DESC LIMIT 1",
+                            (int(document_id), company_id))
             elif vendor:
                 # Prefer one still awaiting review; fall back to the most recent.
                 cur.execute(
-                    """SELECT t.id FROM transactions t JOIN documents d ON d.id=t.document_id
-                       WHERE d.vendor LIKE %s
+                    """SELECT t.id FROM transactions t
+                       JOIN documents d ON d.id=t.document_id AND d.company_id=t.company_id
+                       WHERE d.vendor LIKE %s AND t.company_id=%s
                        ORDER BY (t.status='needs_review') DESC, t.id DESC LIMIT 1""",
-                    (f"%{vendor}%",),
+                    (f"%{vendor}%", company_id),
                 )
             else:
                 return _json({"done": False, "reason": "no_transaction_identified",
@@ -198,10 +202,12 @@ def tool_set_category(category, vendor=None, document_id=None, transaction_id=No
             txn_id = trow["id"]
 
             # 3) Apply it and approve any pending review for this transaction.
-            cur.execute("UPDATE transactions SET category_id=%s, status='sorted' WHERE id=%s",
-                        (chosen["id"], txn_id))
+            cur.execute("UPDATE transactions SET category_id=%s, status='sorted' "
+                        "WHERE id=%s AND company_id=%s",
+                        (chosen["id"], txn_id, company_id))
             cur.execute("UPDATE review_queue SET status='approved' "
-                        "WHERE transaction_id=%s AND status='pending'", (txn_id,))
+                        "WHERE transaction_id=%s AND company_id=%s AND status='pending'",
+                        (txn_id, company_id))
     finally:
         conn.close()
 
@@ -209,7 +215,7 @@ def tool_set_category(category, vendor=None, document_id=None, transaction_id=No
                   "status": "sorted", "note": "Category applied and review approved."})
 
 
-def tool_record_expense(amount, description, expense_date=None, category=None,
+def tool_record_expense(company_id, amount, description, expense_date=None, category=None,
                         payee=None) -> str:
     """Record a cash / no-receipt expense the OWNER describes (petty cash).
 
@@ -237,32 +243,32 @@ def tool_record_expense(amount, description, expense_date=None, category=None,
         with conn.cursor() as cur:
             cur.execute(
                 """INSERT INTO documents
-                     (source_key, doc_type, vendor, doc_date, total_amount,
-                      currency, raw_extraction, status)
-                   VALUES (%s, 'cash', %s, %s, %s, %s, %s, 'read')""",
-                (f"cash:{when}", vendor, when, amt, currency, note),
+                     (company_id, source_key, doc_type, vendor, doc_date,
+                      total_amount, currency, raw_extraction, status)
+                   VALUES (%s, %s, 'cash', %s, %s, %s, %s, %s, 'read')""",
+                (company_id, f"cash:{when}", vendor, when, amt, currency, note),
             )
             document_id = cur.lastrowid
             cur.execute(
                 """INSERT INTO transactions
-                     (document_id, txn_date, description, amount, currency,
-                      source, status)
-                   VALUES (%s, %s, %s, %s, %s, 'cash', 'needs_review')""",
-                (document_id, when, description, amt, currency),
+                     (company_id, document_id, txn_date, description, amount,
+                      currency, source, status)
+                   VALUES (%s, %s, %s, %s, %s, %s, 'cash', 'needs_review')""",
+                (company_id, document_id, when, description, amt, currency),
             )
             txn_id = cur.lastrowid
 
             applied = None
             if category:
-                chosen, _ = resolve_category(cur, category)
+                chosen, _ = resolve_category(cur, category, company_id)
                 if chosen:
                     cur.execute("UPDATE transactions SET category_id=%s, status='sorted' "
-                                "WHERE id=%s", (chosen["id"], txn_id))
+                                "WHERE id=%s AND company_id=%s", (chosen["id"], txn_id, company_id))
                     applied = chosen["name"]
 
             if applied is None:
                 # No (clear) category from the owner → normal rules/LLM review flow.
-                result = categorize_transaction(cur, txn_id)
+                result = categorize_transaction(cur, txn_id, company_id)
             else:
                 result = {"outcome": "sorted", "category": applied, "by": "owner"}
     finally:
@@ -273,7 +279,7 @@ def tool_record_expense(amount, description, expense_date=None, category=None,
                   "date": when, "categorisation": result})
 
 
-def tool_get_review_queue() -> str:
+def tool_get_review_queue(company_id) -> str:
     conn = get_connection()
     try:
         with conn.cursor() as cur:
@@ -282,9 +288,12 @@ def tool_get_review_queue() -> str:
                           t.amount, t.currency, d.vendor
                    FROM review_queue rq
                    LEFT JOIN transactions t ON t.id = rq.transaction_id
+                                           AND t.company_id = rq.company_id
                    LEFT JOIN documents d ON d.id = t.document_id
-                   WHERE rq.status = 'pending'
-                   ORDER BY rq.id"""
+                                        AND d.company_id = rq.company_id
+                   WHERE rq.status = 'pending' AND rq.company_id = %s
+                   ORDER BY rq.id""",
+                (company_id,),
             )
             rows = cur.fetchall()
     finally:
@@ -292,14 +301,15 @@ def tool_get_review_queue() -> str:
     return _json({"pending_count": len(rows), "items": rows})
 
 
-def tool_generate_report(period_start=None, period_end=None) -> str:
+def tool_generate_report(company_id, period_start=None, period_end=None) -> str:
     label = period_start[:7] if period_start else "all"
-    out = Path("reports") / f"report_{label}.xlsx"
-    report, text = generate_report(period_start, period_end, out_path=out)
+    out = Path("reports") / f"report_c{company_id}_{label}.xlsx"
+    report, text = generate_report(period_start, period_end, out_path=out,
+                                   company_id=company_id)
     return _json({"saved_file": str(out), "summary": text})
 
 
-def tool_create_invoice(customer_name, amount=None, description=None,
+def tool_create_invoice(company_id, customer_name, amount=None, description=None,
                         line_items=None, vat_inclusive=False, due_in_days=14,
                         due_date=None, email=None, notes=None) -> str:
     """Raise an invoice for a customer the OWNER wants to bill, and make a PDF.
@@ -313,8 +323,9 @@ def tool_create_invoice(customer_name, amount=None, description=None,
     """
     try:
         invoice = ar.create_invoice(
-            customer_name=customer_name, amount=amount, description=description,
-            line_items=line_items, vat_inclusive=bool(vat_inclusive),
+            customer_name=customer_name, company_id=company_id, amount=amount,
+            description=description, line_items=line_items,
+            vat_inclusive=bool(vat_inclusive),
             due_in_days=int(due_in_days) if due_in_days is not None else 14,
             due_date=due_date, email=email, notes=notes,
         )
@@ -345,14 +356,14 @@ def tool_create_invoice(customer_name, amount=None, description=None,
     })
 
 
-def tool_list_invoices(status=None, only_unpaid=False, only_overdue=False,
+def tool_list_invoices(company_id, status=None, only_unpaid=False, only_overdue=False,
                        customer=None) -> str:
     """List invoices and a summary of what's owed (outstanding vs overdue).
 
     Use for 'who owes me', 'what's outstanding', 'which invoices are overdue',
     'has <customer> paid'. only_unpaid = still owed; only_overdue = past due date.
     """
-    rows = ar.list_invoices(status=status, only_unpaid=bool(only_unpaid),
+    rows = ar.list_invoices(company_id, status=status, only_unpaid=bool(only_unpaid),
                             only_overdue=bool(only_overdue), customer=customer)
     slim = [
         {"invoice_number": r["invoice_number"], "customer": r["customer"],
@@ -360,17 +371,17 @@ def tool_list_invoices(status=None, only_unpaid=False, only_overdue=False,
          "due_date": str(r["due_date"] or ""), "status": r["view_status"]}
         for r in rows
     ]
-    return _json({"summary": ar.outstanding_summary(), "invoices": slim})
+    return _json({"summary": ar.outstanding_summary(company_id), "invoices": slim})
 
 
-def tool_mark_invoice_paid(invoice_number=None, invoice_id=None, paid_date=None) -> str:
+def tool_mark_invoice_paid(company_id, invoice_number=None, invoice_id=None, paid_date=None) -> str:
     """Record that a customer has PAID an invoice — the OWNER's say-so.
 
     This is when the money becomes income: it books a Sales transaction so the
     payment shows in the P&L. Identify the invoice by its number (e.g. INV-0007).
     Only do this when the owner tells you it's been paid, never on a guess.
     """
-    return _json(ar.mark_invoice_paid(invoice_id=invoice_id,
+    return _json(ar.mark_invoice_paid(company_id, invoice_id=invoice_id,
                                       invoice_number=invoice_number,
                                       paid_date=paid_date))
 
@@ -628,8 +639,13 @@ SYSTEM_PROMPT = (
 
 def ask_cfo(question: str, max_turns: int = 8, verbose: bool = True,
             system_suffix: str = "", history: list | None = None,
-            files_out: list | None = None) -> str:
+            files_out: list | None = None, company_id: int = 1) -> str:
     """Run the agentic loop for one question and return the final answer.
+
+    company_id scopes every tool call to one business's books, so the agent can
+    only ever read or change the data of the company it was asked about. It is
+    injected into each tool's arguments below — the model never sees or chooses
+    it, so it can't be steered across companies.
 
     system_suffix lets a caller (e.g. WhatsApp) tweak the reply style without
     changing the base prompt.
@@ -679,7 +695,10 @@ def ask_cfo(question: str, max_turns: int = 8, verbose: bool = True,
                         print(f"   [calling {block.name}({_json(block.input)})]")
                     func = DISPATCH.get(block.name)
                     try:
-                        output = func(**block.input) if func else f"Unknown tool {block.name}"
+                        # Inject the company scope server-side; the model never
+                        # supplies it, so a tool can only ever touch this company.
+                        kwargs = {**block.input, "company_id": company_id}
+                        output = func(**kwargs) if func else f"Unknown tool {block.name}"
                     except Exception as e:  # tool failure -> tell the model, don't crash
                         output = _json({"error": str(e)})
                     # Any tool that produced a file to deliver (a report, an
