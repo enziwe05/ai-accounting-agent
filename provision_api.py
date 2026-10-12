@@ -66,8 +66,11 @@ def provision_company(body: dict, x_api_key: str = Header(...)):
             suffix += 1
             slug = f"{base}-{suffix}"
 
+        # New companies start SUSPENDED (bot paused) and are flipped to 'active'
+        # by the web app's PayFast webhook on first successful payment. This
+        # enforces pay-first: no WhatsApp access until a plan is paid for.
         cur.execute(
-            "INSERT INTO companies (name, slug, status) VALUES (%s, %s, 'active')",
+            "INSERT INTO companies (name, slug, status) VALUES (%s, %s, 'suspended')",
             [name, slug],
         )
         company_id = cur.lastrowid
